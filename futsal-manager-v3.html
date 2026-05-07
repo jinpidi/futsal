@@ -730,7 +730,7 @@
     overflow-x: auto;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
-    padding-bottom: 2px;
+    padding: 4px 2px 4px;
   }
   .tb-toolbar::-webkit-scrollbar { display: none; }
   .tb-toolbar-spacer { flex: 1 0 8px; }
@@ -2456,6 +2456,43 @@ async function cancelVote(matchId, voterId) {
    =========================================================== */
 let _tbActive = null;
 
+/* ── Audio context (singleton, unlocked on first user gesture) ── */
+let _audioCtx  = null;
+let _wakeLock  = null;
+
+function _unlockAudio() {
+  try {
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (_audioCtx.state === 'suspended') _audioCtx.resume();
+  } catch (e) {}
+}
+
+async function _requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      _wakeLock = await navigator.wakeLock.request('screen');
+    }
+  } catch (e) {}
+}
+function _releaseWakeLock() {
+  try { if (_wakeLock) { _wakeLock.release(); _wakeLock = null; } } catch (e) {}
+}
+
+async function _requestNotifPerm() {
+  try {
+    if ('Notification' in window && Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+  } catch (e) {}
+}
+function _showAlarmNotif(body) {
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('⏰ kkabi 알람', { body, requireInteraction: true, silent: false });
+    }
+  } catch (e) {}
+}
+
 /* ── Live timer state (persists across re-renders) ── */
 let _liveTimer = {
   roundSecs: 720,   // 12분 default
@@ -2468,24 +2505,57 @@ let _liveTimer = {
   alerted: false,
 };
 
-function playAlarm() {
+function playAlarm(notifBody) {
+  // 1) 진동 (Android Chrome에서 동작)
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    // 최대 볼륨 beep × 3
-    const beep = (freq, delay, dur) => {
-      const osc = ctx.createOscillator(), g = ctx.createGain();
-      osc.connect(g); g.connect(ctx.destination);
-      osc.type = 'square';          // 사각파 = 더 날카롭고 큰 소리
-      osc.frequency.value = freq;
-      g.gain.setValueAtTime(1.0, ctx.currentTime + delay);
-      g.gain.setValueAtTime(1.0, ctx.currentTime + delay + dur * 0.7);
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + dur);
-      osc.start(ctx.currentTime + delay);
-      osc.stop(ctx.currentTime + delay + dur);
+    if ('vibrate' in navigator) navigator.vibrate([500,100,500,100,500,150,1000,150,1000]);
+  } catch (e) {}
+
+  // 2) 시스템 알림 (백그라운드 탭 / 화면 잠금 상태에서도 표시)
+  _showAlarmNotif(notifBody || '라운드 알람이 울렸습니다!');
+
+  // 3) 웹 오디오 (탭이 열려 있어야 동작)
+  try {
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = _audioCtx;
+
+    const fire = () => {
+      const cmp = ctx.createDynamicsCompressor();
+      cmp.threshold.value = -6;
+      cmp.knee.value      = 0;
+      cmp.ratio.value     = 20;
+      cmp.attack.value    = 0.001;
+      cmp.release.value   = 0.1;
+      cmp.connect(ctx.destination);
+
+      // 두 개의 오실레이터를 동시에 울려서 배음 강화
+      const beep = (freq, harmonicRatio, delay, dur) => {
+        [freq, freq * harmonicRatio].forEach(f => {
+          const osc = ctx.createOscillator();
+          const g   = ctx.createGain();
+          osc.connect(g); g.connect(cmp);
+          osc.type = 'square';
+          osc.frequency.value = f;
+          const t = ctx.currentTime + delay;
+          g.gain.setValueAtTime(0.7, t);
+          g.gain.setValueAtTime(0.7, t + dur * 0.75);
+          g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+          osc.start(t); osc.stop(t + dur);
+        });
+      };
+      // 삐삐삐 — 삐—— 삐————
+      beep(1047, 1.5, 0.00, 0.18);
+      beep(1047, 1.5, 0.22, 0.18);
+      beep(1047, 1.5, 0.44, 0.18);
+      beep(880,  2.0, 0.72, 0.50);
+      beep(1047, 1.5, 1.30, 0.75);
     };
-    beep(880,  0,    0.45);
-    beep(1320, 0.50, 0.45);
-    beep(880,  1.00, 0.70);
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(fire);
+    } else {
+      fire();
+    }
   } catch (e) {}
 }
 
@@ -2521,7 +2591,11 @@ function updateTimerDisplay() {
 
   // ── Auto-transition: break → playing or done
   if (phase === 'break' && phaseEndAt && now >= phaseEndAt) {
-    if (!_liveTimer.alerted) { _liveTimer.alerted = true; playAlarm(); }
+    if (!_liveTimer.alerted) {
+      _liveTimer.alerted = true;
+      const nextRd = roundIdx + 1 < numRounds ? `RD ${roundIdx + 2} 시작!` : '전체 경기 완료!';
+      playAlarm(`쉬는시간 종료 · ${nextRd}`);
+    }
     if (roundIdx + 1 < numRounds) {
       _liveTimer.roundIdx = roundIdx + 1;
       _liveTimer.phase = 'playing';
@@ -2531,6 +2605,7 @@ function updateTimerDisplay() {
     } else {
       _liveTimer.phase = 'done';
       if (_liveTimer.interval) { clearInterval(_liveTimer.interval); _liveTimer.interval = null; }
+      _releaseWakeLock();
     }
     phase = _liveTimer.phase; roundIdx = _liveTimer.roundIdx;
   }
@@ -2603,11 +2678,14 @@ function updateTimerDisplay() {
 
   // ── Event listeners
   const onMinus = $('#lv-t-minus');
-  if (onMinus) onMinus.onclick = () => { _liveTimer.roundSecs = Math.max(60, _liveTimer.roundSecs - 30); updateTimerDisplay(); };
+  if (onMinus) onMinus.onclick = () => { _unlockAudio(); _liveTimer.roundSecs = Math.max(60, _liveTimer.roundSecs - 30); updateTimerDisplay(); };
   const onPlus = $('#lv-t-plus');
-  if (onPlus) onPlus.onclick = () => { _liveTimer.roundSecs = Math.min(1800, _liveTimer.roundSecs + 30); updateTimerDisplay(); };
+  if (onPlus) onPlus.onclick = () => { _unlockAudio(); _liveTimer.roundSecs = Math.min(1800, _liveTimer.roundSecs + 30); updateTimerDisplay(); };
   const onStart = $('#lv-t-start');
   if (onStart) onStart.onclick = () => {
+    _unlockAudio();
+    _requestNotifPerm();
+    _requestWakeLock();
     _liveTimer.phase = 'playing';
     _liveTimer.roundIdx = 0;
     _liveTimer.phaseEndAt = Date.now() + _liveTimer.roundSecs * 1000;
@@ -2617,6 +2695,7 @@ function updateTimerDisplay() {
   };
   const onEnd = $('#lv-t-end');
   if (onEnd) onEnd.onclick = () => {
+    _unlockAudio();
     if (_liveTimer.roundIdx >= _liveTimer.numRounds - 1) {
       _liveTimer.phase = 'done';
       if (_liveTimer.interval) { clearInterval(_liveTimer.interval); _liveTimer.interval = null; }
@@ -2628,7 +2707,7 @@ function updateTimerDisplay() {
     updateTimerDisplay();
   };
   const onReset = $('#lv-t-reset');
-  if (onReset) onReset.onclick = resetLiveTimer;
+  if (onReset) onReset.onclick = () => { _unlockAudio(); resetLiveTimer(); };
 }
 
 function openTeamBuilder(matchId) {
@@ -2808,12 +2887,14 @@ function renderTeamBuilderPage() {
       }
     };
   }
-  const shareTeam = async () => {
+  const shareTeam = () => {
+    // 클립보드 복사는 유저 제스처 컨텍스트 안에서 즉시 실행해야 함
+    copyText(buildTeamShareUrl(state.currentMatchId));
+    // 저장은 비동기로 백그라운드 처리
     if (state.isAdmin) {
       _tbActive = readTeamsFromDOM(_tbActive);
-      await saveTeamPlan(state.currentMatchId, _tbActive);
+      saveTeamPlan(state.currentMatchId, _tbActive).catch(e => toast('저장 실패: ' + e.message, 'err'));
     }
-    copyText(buildTeamShareUrl(state.currentMatchId));
   };
   $('#tb-share').onclick = shareTeam;
   if (state.isAdmin) {
@@ -2968,9 +3049,8 @@ function paintRadarChart(idx, members, allTeamMems) {
   const axisMax = RADAR_AXES.map((_, ai) => validStats.length ? Math.max(...validStats.map(s => s[ai])) : 10);
   const axisMin = RADAR_AXES.map((_, ai) => validStats.length ? Math.min(...validStats.map(s => s[ai])) : 0);
 
-  const EPS = 0.12;
-  const isTop  = RADAR_AXES.map((_, ai) => multiTeam && thisStats[ai] >= axisMax[ai] - EPS);
-  const isWeak = RADAR_AXES.map((_, ai) => multiTeam && thisStats[ai] <= axisMin[ai] + EPS && axisMax[ai] - axisMin[ai] > EPS);
+  const EPS   = 0.12;
+  const isTop = RADAR_AXES.map((_, ai) => multiTeam && thisStats[ai] >= axisMax[ai] - EPS);
 
   const tc  = RADAR_TEAM_COLORS[idx] || RADAR_TEAM_COLORS[0];
   const N   = 6;
@@ -3005,23 +3085,21 @@ function paintRadarChart(idx, members, allTeamMems) {
     const ratio = ratios[ai];
     const dp    = pt(R * ratio, ai);
     const lp    = pt(LR, ai);
-    const top   = isTop[ai], weak = isWeak[ai];
+    const top = isTop[ai];
 
     // outer glow for top stat
     if (top) {
       svg += `<circle cx="${dp.x.toFixed(2)}" cy="${dp.y.toFixed(2)}" r="8" fill="${tc.glow}" stroke="none"/>`;
       svg += `<circle cx="${dp.x.toFixed(2)}" cy="${dp.y.toFixed(2)}" r="4.5" fill="${tc.dot}" stroke="#fff" stroke-width="1.2"/>`;
-    } else if (weak) {
-      svg += `<circle cx="${dp.x.toFixed(2)}" cy="${dp.y.toFixed(2)}" r="3.2" fill="rgba(226,232,240,0.7)" stroke="rgba(148,163,184,0.55)" stroke-width="1.2"/>`;
     } else {
       svg += `<circle cx="${dp.x.toFixed(2)}" cy="${dp.y.toFixed(2)}" r="3.5" fill="${tc.dot}" opacity="0.75"/>`;
     }
 
     // label anchor based on horizontal position
     const anchor = lp.x > CX + 10 ? 'start' : lp.x < CX - 10 ? 'end' : 'middle';
-    const lColor = top ? tc.dot : weak ? 'rgba(148,163,184,0.9)' : 'rgba(51,65,85,0.9)';
+    const lColor  = top ? tc.dot : 'rgba(51,65,85,0.9)';
     const lWeight = top ? '900' : '700';
-    const indicator = top ? ' ▲' : weak ? ' ▼' : '';
+    const indicator = top ? ' ▲' : '';
     const val = thisStats[ai].toFixed(1);
 
     // axis name
