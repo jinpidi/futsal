@@ -516,7 +516,7 @@
   /* 타인이 투표한 버튼: 상태별 컬러 */
   .pick-btn.vote-attend  { background: #d1fae5; border-color: var(--accent); }
   .pick-btn.vote-maybe   { background: #fef3c7; border-color: var(--warn); }
-  .pick-btn.vote-decline { background: #f1f5f9; border-color: #94a3b8; color: #94a3b8; text-decoration: line-through; }
+  .pick-btn.vote-decline { background: #f1f5f9; border-color: #94a3b8; color: #94a3b8; }
   .pick-btn .pb-vote-bar {
     width: 18px; height: 3px; border-radius: 2px; flex-shrink: 0;
   }
@@ -661,12 +661,12 @@
   }
   .team-body {
     display: grid;
-    grid-template-columns: 84px 172px;
+    grid-template-columns: 84px 1fr;
     gap: 10px;
     align-items: start;
   }
   @media (max-width: 340px) {
-    .team-body { grid-template-columns: 70px 140px; }
+    .team-body { grid-template-columns: 70px 1fr; }
   }
   .drag-list {
     display: flex;
@@ -674,13 +674,18 @@
     gap: 2px;
     min-height: 40px;
   }
-  .team-radar { overflow: visible; line-height: 0; }
+  .team-radar { overflow: visible; line-height: 0; display: flex; justify-content: flex-end; }
   .radar-placeholder {
     width: 172px; height: 172px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 10px; color: var(--text-3); font-weight: 700;
-    text-align: center; border-radius: 50%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    border-radius: 50%;
     background: var(--surface-2); border: 1px dashed var(--border-2);
+  }
+  .radar-placeholder .rp-num {
+    font-size: 18px; font-weight: 900; color: var(--text-3); letter-spacing: -0.02em; line-height: 1;
+  }
+  .radar-placeholder .rp-label {
+    font-size: 9.5px; font-weight: 700; color: var(--text-3); opacity: 0.7;
   }
   .team-box.team-b { border-top-color: var(--team-b); }
   .team-box.team-c { border-top-color: var(--team-c); }
@@ -2387,11 +2392,18 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
   html += `</div>`;
 
   if (confirmed.length) {
+    // 열 우선 순서: 1열에 1..half, 2열에 half+1..n 순서로 쌓이게
+    const half = Math.ceil(confirmed.length / 2);
+    const colMajor = [];
+    for (let i = 0; i < half; i++) {
+      colMajor.push([confirmed[i], i]);
+      if (i + half < confirmed.length) colMajor.push([confirmed[i + half], i + half]);
+    }
     html += `<div class="roster-confirmed-grid">`;
-    confirmed.forEach(([pid, v], i) => {
+    colMajor.forEach(([[pid, v], origIdx]) => {
       const name = (state.players[pid] && state.players[pid].name) || v.name || '게스트';
       html += `<div class="ric">
-        <span class="ric-num">${i + 1}</span>
+        <span class="ric-num">${origIdx + 1}</span>
         <span class="ric-name">${escapeHtml(name)}</span>
         <span class="ric-time">${fmtVoteTimestamp(v.ts)}</span>
       </div>`;
@@ -3035,38 +3047,46 @@ function snakeDraft(players, teamN) {
 // 팀 점수 합계가 최대한 비슷하게 greedy 배분
 function balanceDraft(players, teamN) {
   if (teamN < 2) teamN = 2;
-  if (!players.length) return Array.from({ length: teamN }, () => ({ members: [] }));
+  const n = players.length;
+  if (n === 0) return Array.from({ length: teamN }, () => ({ members: [] }));
 
   const sc = p => calcScore(p) || 6;
-  const avgDiff = teams => {
-    const avgs = teams.map(t => t.members.length ? t.tot / t.members.length : 0);
-    return Math.max(...avgs) - Math.min(...avgs);
-  };
+
+  // 팀별 인원 수: 나머지는 팀A(index 0)에 몰아줌
+  const base = Math.floor(n / teamN);
+  const rem  = n % teamN;
+  const caps = Array.from({ length: teamN }, (_, i) => i === 0 ? base + rem : base);
 
   const tryOnce = (arr) => {
-    const teams = Array.from({ length: teamN }, () => ({ members: [], tot: 0 }));
+    const teams = Array.from({ length: teamN }, (_, i) => ({ members: [], cap: caps[i], tot: 0 }));
     arr.forEach(p => {
-      // 평균이 가장 낮은 팀에 배정 (tot/members.length 기준, 빈 팀 우선)
-      let minIdx = 0, minAvg = Infinity;
-      teams.forEach((t, i) => {
+      // 아직 인원 여유 있는 팀 중 현재 평균이 가장 낮은 팀에 배정
+      const eligible = teams.filter(t => t.members.length < t.cap);
+      if (!eligible.length) return;
+      let pick = eligible[0];
+      let pickAvg = pick.members.length === 0 ? -Infinity : pick.tot / pick.members.length;
+      eligible.forEach(t => {
         const avg = t.members.length === 0 ? -Infinity : t.tot / t.members.length;
-        if (avg < minAvg) { minAvg = avg; minIdx = i; }
+        if (avg < pickAvg) { pickAvg = avg; pick = t; }
       });
-      teams[minIdx].members.push(p);
-      teams[minIdx].tot += sc(p);
+      pick.members.push(p);
+      pick.tot += sc(p);
     });
     return teams;
   };
 
+  const maxAvgDiff = teams => {
+    const avgs = teams.filter(t => t.members.length).map(t => t.tot / t.members.length);
+    return Math.max(...avgs) - Math.min(...avgs);
+  };
+
   let best = null, bestDiff = Infinity;
-  const TARGET = 0.3;
-  const MAX_TRIES = 400;
+  const TARGET = 0.3, MAX_TRIES = 400;
 
   for (let i = 0; i < MAX_TRIES; i++) {
-    // 매 시도마다 다르게 셔플
     const shuffled = [...players].sort(() => Math.random() - 0.5);
     const result = tryOnce(shuffled);
-    const diff = avgDiff(result);
+    const diff = maxAvgDiff(result);
     if (diff < bestDiff) {
       bestDiff = diff;
       best = result;
@@ -3074,7 +3094,6 @@ function balanceDraft(players, teamN) {
     }
   }
 
-  // tot 임시 필드 제거 후 반환
   return best.map(t => ({ members: t.members }));
 }
 
@@ -3129,8 +3148,8 @@ function paintRadarChart(idx, members, allTeamMems, elOverride) {
   const el = elOverride || $(`#tradar-${idx}`);
   if (!el) return;
 
-  if (members.length < 2) {
-    el.innerHTML = `<div class="radar-placeholder">2명+<br>스탯 표시</div>`;
+  if (members.length < 5) {
+    el.innerHTML = `<div class="radar-placeholder"><span class="rp-num">5+</span><span class="rp-label">전력 분석</span></div>`;
     return;
   }
 
