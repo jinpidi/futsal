@@ -1604,8 +1604,8 @@ const TAGLINE = "우리의 경기는 더 재밌어야 한다";
 // Admin password hash is stored in Firebase at /config/adminHash — not in source code.
 const POSITIONS = ["피벗", "윙", "픽소", "키퍼", "멀티"];
 function normalizePos(pos) { return pos === '골키퍼' ? '키퍼' : (pos || '멀티'); }
-const STATS_KEYS = ["att", "def", "spd", "pas", "sta", "org"];
-const STATS_LABELS = { att: "공격", def: "수비", spd: "속도", pas: "패스", sta: "체력", org: "매너" };
+const STATS_KEYS = ["att", "pow", "spd", "pas", "def", "tem", "sta", "org"];
+const STATS_LABELS = { att: "공격", pow: "파워", spd: "속도", pas: "패스", def: "수비", tem: "팀웍", sta: "체력", org: "매너" };
 
 /* ===========================================================
    SVG ICONS
@@ -1714,11 +1714,11 @@ function isPastDate(iso) {
 }
 function calcScore(p) {
   const sum = STATS_KEYS.reduce((a, k) => a + (Number(p[k]) || 0), 0);
-  return Math.round((sum / 6) * 10) / 10;
+  return Math.round((sum / STATS_KEYS.length) * 10) / 10;
 }
 function teamAvgStats() {
   const arr = Object.values(state.players || {});
-  if (!arr.length) return { att: 6, def: 6, spd: 6, pas: 6, sta: 6, org: 6 };
+  if (!arr.length) return { att: 6, pow: 6, spd: 6, pas: 6, def: 6, tem: 6, sta: 6, org: 6 };
   const r = {};
   STATS_KEYS.forEach(k => {
     r[k] = Math.round((arr.reduce((a, p) => a + (Number(p[k]) || 6), 0) / arr.length) * 10) / 10;
@@ -3062,8 +3062,9 @@ async function saveTeamPlan(matchId, teams) {
         id: p.id || ('m_' + uid()),
         name: p.name,
         score: Number(p.score) || calcScore(p) || 6,
-        att: Number(p.att) || 6, def: Number(p.def) || 6, spd: Number(p.spd) || 6,
-        pas: Number(p.pas) || 6, sta: Number(p.sta) || 6, org: Number(p.org) || 6,
+        att: Number(p.att) || 6, pow: Number(p.pow) || 6, spd: Number(p.spd) || 6,
+        pas: Number(p.pas) || 6, def: Number(p.def) || 6, tem: Number(p.tem) || 6,
+        sta: Number(p.sta) || 6, org: Number(p.org) || 6,
         position: p.position || ''
       }))
     }));
@@ -3155,7 +3156,7 @@ function guestPlayerWithId(id, name) {
   const score = calcScore(avg);
   return {
     id, name: String(name || '게스트').trim(), score,
-    att: avg.att, def: avg.def, spd: avg.spd, pas: avg.pas, sta: avg.sta, org: avg.org,
+    att: avg.att, pow: avg.pow, spd: avg.spd, pas: avg.pas, def: avg.def, tem: avg.tem, sta: avg.sta, org: avg.org,
     position: '멀티'
   };
 }
@@ -3182,9 +3183,11 @@ function generateRounds(teamN) {
    ------------------------------------------------------- */
 const RADAR_AXES = [
   { key: 'att', label: '공격' },
+  { key: 'pow', label: '파워' },
   { key: 'spd', label: '속도' },
   { key: 'pas', label: '패스' },
   { key: 'def', label: '수비' },
+  { key: 'tem', label: '팀웍' },
   { key: 'sta', label: '체력' },
   { key: 'org', label: '매너' },
 ];
@@ -3222,14 +3225,14 @@ function paintRadarChart(idx, members, allTeamMems, elOverride) {
   });
 
   const tc  = RADAR_TEAM_COLORS[idx] || RADAR_TEAM_COLORS[0];
-  const N   = 6;
-  const CX  = 86, CY = 86, R = 58, LR = R + 22;
-  const W   = 172, H = 172;
+  const N   = RADAR_AXES.length;  // 8-axis octagon
+  const CX  = 88, CY = 88, R = 58, LR = R + 24;
+  const W   = 180, H = 180;
   const ANG = (i) => -Math.PI / 2 + i * (2 * Math.PI / N);
   const pt  = (r, i) => ({ x: CX + r * Math.cos(ANG(i)), y: CY + r * Math.sin(ANG(i)) });
   const ps  = (r, i) => { const p = pt(r, i); return `${p.x.toFixed(2)},${p.y.toFixed(2)}`; };
 
-  let svg = `<svg width="${W}" height="${H}" viewBox="-14 -14 200 200" style="overflow:visible;display:block;">`;
+  let svg = `<svg width="${W}" height="${H}" viewBox="-16 -16 208 208" style="overflow:visible;display:block;">`;
 
   // ── Grid rings (33 / 66 / 100 %)
   [0.33, 0.66, 1.0].forEach(lv => {
@@ -3788,79 +3791,8 @@ function renderHistoryList(archived) {
 
 async function editArchived(matchId) {
   if (!await ensureAdmin()) return;
-  const m = state.matches[matchId];
-  if (!m) return;
-  const curDate = (m.date && /^\d{4}-\d{2}-\d{2}$/.test(m.date)) ? m.date : '';
-  const teamsHtml = (m.teams || []).map((team, ti) => `
-    <div style="margin-bottom:10px;">
-      <div style="font-size:10px;font-weight:800;color:var(--text-2);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
-        <span style="width:18px;height:18px;border-radius:4px;background:var(--team-${['a','b','c'][ti]||'a'});color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;">${teamLabel(ti)}</span>
-        팀 선수 명단
-      </div>
-      <div id="er-team-${ti}">
-        ${(team.members || []).map((p, pi) => `
-          <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;">
-            <span style="font-size:10px;color:var(--text-3);width:20px;text-align:right;">${pi+1}</span>
-            <input class="input" style="flex:1;padding:7px 10px;font-size:12px;" data-team="${ti}" data-pi="${pi}" value="${escapeHtml(p.name)}">
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `).join('');
-  showModal(`
-    <h3>경기 결과 수정</h3>
-    <div class="field">
-      <label>경기 날짜</label>
-      <input class="input" type="date" id="er-date" value="${curDate}">
-    </div>
-    <div class="field">
-      <label>팀별 선수 명단</label>
-      ${teamsHtml}
-    </div>
-    <div class="field">
-      <label>라운드별 결과</label>
-      <div id="edit-rounds-list"></div>
-    </div>
-    <div style="display:flex;gap:8px;margin-top:14px;flex-direction:column;">
-      <button class="btn btn-accent btn-block" id="er-save">저장</button>
-      <button class="btn btn-outline btn-block" data-modal-close>취소</button>
-    </div>
-  `);
-  const list = $('#edit-rounds-list');
-  list.innerHTML = (m.rounds || []).map(r => `
-    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;font-size:12px;">
-      <span style="width:36px;font-weight:800;">${r.id}R</span>
-      <select class="select" data-rid="${r.id}" style="flex:1;">
-        <option value="">-</option>
-        <option value="t1" ${r.winner==='t1'?'selected':''}>${teamLabel(r.t1)}팀 승</option>
-        <option value="draw" ${r.winner==='draw'?'selected':''}>무승부</option>
-        <option value="t2" ${r.winner==='t2'?'selected':''}>${teamLabel(r.t2)}팀 승</option>
-      </select>
-    </div>
-  `).join('');
-  $('#er-save').onclick = async () => {
-    const newDate = $('#er-date').value;
-    const updated = (m.rounds || []).map(r => {
-      const sel = list.querySelector(`select[data-rid="${r.id}"]`);
-      return { ...r, winner: sel.value || null };
-    });
-    await db.ref(`matches/${matchId}/rounds`).set(updated);
-    if (newDate && newDate !== m.date) {
-      await db.ref(`matches/${matchId}/date`).set(newDate);
-    }
-    const updatedTeams = (m.teams || []).map((team, ti) => {
-      const inputs = $$(`#er-team-${ti} input[data-team="${ti}"]`);
-      const members = (team.members || []).map((p, pi) => {
-        const inp = inputs[pi];
-        const newName = inp ? inp.value.trim() : p.name;
-        return { ...p, name: newName || p.name };
-      });
-      return { ...team, members };
-    });
-    await db.ref(`matches/${matchId}/teams`).set(updatedTeams);
-    closeModal();
-    toast('수정 완료', 'ok');
-  };
+  // Delegate to the new player-picker modal (saves with current stats)
+  openManualMatchModal(matchId);
 }
 
 function openManualMatchModal(existingId) {
@@ -4032,12 +3964,14 @@ function openManualMatchModal(existingId) {
             return {
               id: full.id,
               name: full.name,
-              att: full.att || 5,
-              def: full.def || 5,
-              spd: full.spd || 5,
-              pas: full.pas || 5,
-              sta: full.sta || 5,
-              org: full.org || 5,
+              att: full.att || 6,
+              pow: full.pow || 6,
+              spd: full.spd || 6,
+              pas: full.pas || 6,
+              def: full.def || 6,
+              tem: full.tem || 6,
+              sta: full.sta || 6,
+              org: full.org || 6,
               score: calcScore(full) || 6,
             };
           });
@@ -4297,7 +4231,7 @@ async function ensureAdmin() {
 function openPlayerEdit(pid) {
   const p = pid ? state.players[pid] : null;
   const isNew = !p;
-  const data = p ? { ...p } : { name: '', att: 6, def: 6, spd: 6, pas: 6, sta: 6, org: 6, position: '멀티' };
+  const data = p ? { ...p } : { name: '', att: 6, pow: 6, spd: 6, pas: 6, def: 6, tem: 6, sta: 6, org: 6, position: '멀티' };
 
   showModal(`
     <h3>${isNew ? '새 선수' : '선수 정보'}</h3>
