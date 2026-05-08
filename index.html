@@ -1391,6 +1391,49 @@
   }
   .modal-card h3 { margin: 0 0 12px; font-size: 16px; font-weight: 800; color: var(--text); }
   .field { margin-bottom: 12px; }
+  /* 누락 기록 모달 플레이어 피커 */
+  .mm-player-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+  .mm-pick-btn {
+    padding: 6px 4px 5px;
+    border-radius: 8px;
+    border: 1.5px solid var(--border);
+    background: var(--surface-2);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-2);
+    cursor: pointer;
+    text-align: center;
+    transition: all .12s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    line-height: 1.2;
+  }
+  .mm-pick-btn .mpb-badge {
+    font-size: 8.5px; font-weight: 900; height: 13px; letter-spacing: 0.02em;
+    border-radius: 4px; padding: 0 4px; display: inline-flex; align-items: center;
+    background: transparent; color: transparent;
+  }
+  .mm-pick-btn.mm-ta { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }
+  .mm-pick-btn.mm-ta .mpb-badge { background: #1e40af; color: #fff; }
+  .mm-pick-btn.mm-tb { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
+  .mm-pick-btn.mm-tb .mpb-badge { background: #991b1b; color: #fff; }
+  .mm-pick-btn.mm-tc { background: #d1fae5; border-color: #6ee7b7; color: #065f46; }
+  .mm-pick-btn.mm-tc .mpb-badge { background: #065f46; color: #fff; }
+  .mm-team-summary {
+    display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; min-height: 22px;
+  }
+  .mm-summary-chip {
+    font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 20px;
+    display: inline-flex; align-items: center; gap: 3px;
+  }
+  .mm-summary-chip.mm-ta { background: #dbeafe; color: #1e40af; }
+  .mm-summary-chip.mm-tb { background: #fee2e2; color: #991b1b; }
+  .mm-summary-chip.mm-tc { background: #d1fae5; color: #065f46; }
+  .mm-round-row { display: flex; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--border); }
+  .mm-round-row:last-child { border-bottom: none; }
+  .mm-round-label { font-size: 11px; font-weight: 800; color: var(--text-2); min-width: 28px; }
   .field label {
     display: block;
     font-size: 10.5px;
@@ -1914,11 +1957,15 @@ function renderPreMatchPage() {
 
   box.innerHTML = matches.map(m => {
     const votes = m.votes || {};
-    const attCount = Object.values(votes).filter(v => v.status === 'attend').length;
+    const voteCount = Object.values(votes).filter(v => v.status === 'attend').length;
+    // For finished matches with teams (manual entries), count actual team members
+    const finished = m.status === 'finished';
+    const attCount = (finished && m.teams && !voteCount)
+      ? (m.teams || []).reduce((a, t) => a + (t.members || []).length, 0)
+      : voteCount;
     const max = m.maxPlayers || 15;
     const pct = Math.min(100, (attCount / max) * 100);
     const past = isPastDate(m.date);
-    const finished = m.status === 'finished';
     const klass = (past || finished) ? ' is-past' : '';
     const finishedKlass = finished ? ' is-finished' : '';
     const statusBadge = finished ? '<span class="badge b-finished">종료</span>' : (past ? '<span class="badge b-past">날짜 지남</span>' : renderStatusBadge(m));
@@ -2126,20 +2173,17 @@ function openMatchDetail(id) {
 
 function showFinishedMatchDetail(m) {
   const stand = computeStandings(m);
-  const enrichMems = (members) => (members || []).map(p => {
-    const full = p.id && !isGuestPlayer(p) ? (state.players[p.id] || null) : null;
-    return full ? { ...full, ...p } : p;
-  });
   const isManualMatch = String(m.id || '').startsWith('manual_');
   const ranks = stand.map((s, idx) => {
     const team = m.teams[s.id - 1];
     const ti = s.id - 1;
-    const enriched = enrichMems(team.members);
+    const members = team.members || [];
     const minN = isManualMatch ? 1 : 5;
-    const rating = enriched.length >= minN ? Math.round(calculateTeamScore(enriched) * 10) : null;
+    const teamScore = members.length >= minN ? calculateTeamScore(members) : null;
+    const rating = teamScore !== null ? Math.round(teamScore * 10) / 10 : null;
     return {
       rank: idx + 1, ti,
-      members: (team.members || []).map(p => p.name).join(', '),
+      members: members.map(p => p.name).join(', '),
       pts: s.p, w: s.w, d: s.d, l: s.l,
       rating
     };
@@ -2161,7 +2205,7 @@ function showFinishedMatchDetail(m) {
         </div>
         <div class="h-right">
           <span class="h-pts-num">${r.pts}</span>
-          <span class="h-pts-label">점${r.rating != null ? ' · ' + r.rating : ''}</span>
+          <span class="h-pts-label">점${r.rating != null ? ' · ' + Number(r.rating).toFixed(1) : ''}</span>
         </div>
       </div>
     `).join('')}
@@ -3678,24 +3722,18 @@ function renderHistoryList(archived) {
   const sorted = [...archived].sort((a, b) => (b.finishedAt || b.createdAt || 0) - (a.finishedAt || a.createdAt || 0));
   root.innerHTML = sorted.map(m => {
     const stand = computeStandings(m);
-    // 등록 선수라면 현재 state.players 스탯으로 enrich (수기 기록 포함)
-    const enrichMembers = (members) => (members || []).map(p => {
-      const full = p.id && !isGuestPlayer(p) ? (state.players[p.id] || null) : null;
-      return full ? { ...full, ...p } : p;  // 저장된 id/name 우선, 스탯은 최신 state에서
-    });
+    const isManual = String(m.id || '').startsWith('manual_');
+    const minForRating = isManual ? 1 : 5;
     const ranks = stand.map((s, idx) => {
       const team = m.teams[s.id - 1];
       const ti = s.id - 1;
-      const enriched = enrichMembers(team.members);
-      // 수기 기록은 인원 제한 없이 RTG 산출, 일반 경기는 5명+ 유지
-      const isManual = String(m.id || '').startsWith('manual_');
-      const minForRating = isManual ? 1 : 5;
-      const teamScore = enriched.length >= minForRating ? calculateTeamScore(enriched) : null;
+      const members = team.members || [];
+      const teamScore = members.length >= minForRating ? calculateTeamScore(members) : null;
       return {
         rank: idx + 1, ti,
-        members: (team.members || []).map(p => p.name).join(', '),
+        members: members.map(p => p.name).join(', '),
         pts: s.p, w: s.w, d: s.d, l: s.l,
-        rating: teamScore !== null ? Math.round(teamScore * 10) : null
+        rating: teamScore !== null ? Math.round(teamScore * 10) / 10 : null
       };
     });
     return `
@@ -3719,7 +3757,7 @@ function renderHistoryList(archived) {
             </div>
             <div class="h-right">
               <span class="h-pts-num">${r.pts}<span class="pts-unit">P</span></span>
-              <span class="h-pts-label">rtg · ${r.rating != null ? r.rating : '—'}</span>
+              <span class="h-pts-label">rtg · ${r.rating != null ? Number(r.rating).toFixed(1) : '—'}</span>
             </div>
           </div>
         `).join('')}
@@ -3825,38 +3863,83 @@ async function editArchived(matchId) {
   };
 }
 
-function openManualMatchModal() {
+function openManualMatchModal(existingId) {
   const today = new Date().toISOString().slice(0, 10);
-  let teamCount = 2;
-  let rounds = generateRounds(teamCount);
+  const existing = existingId ? (state.matches[existingId] || null) : null;
+
+  let teamCount = existing ? (existing.teams || []).length : 2;
+  if (teamCount < 2) teamCount = 2;
+  let rounds = existing ? (existing.rounds || generateRounds(teamCount)) : generateRounds(teamCount);
+
+  // assignments: playerId -> teamIndex (0=A,1=B,2=C), null=unassigned
+  const assignments = {};
+  const allPlayers = Object.values(state.players || {}).sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '', 'ko-KR'));
+
+  // Pre-fill from existing match using current player ids
+  if (existing) {
+    (existing.teams || []).forEach((t, ti) => {
+      (t.members || []).forEach(p => {
+        if (p.id && state.players[p.id]) assignments[p.id] = ti;
+      });
+    });
+  }
+
+  const teamColors = ['mm-ta', 'mm-tb', 'mm-tc'];
+  const teamLabels = ['A팀', 'B팀', 'C팀'];
+  const teamBgVars = ['var(--team-a)', 'var(--team-b)', 'var(--team-c)'];
+
+  function buildPlayerGrid() {
+    if (!allPlayers.length) return `<div style="font-size:12px;color:var(--text-2);text-align:center;padding:12px 0;">등록된 선수가 없습니다</div>`;
+    return `<div class="mm-player-grid">
+      ${allPlayers.map(p => {
+        const ti = assignments[p.id] != null ? assignments[p.id] : null;
+        const cls = ti != null ? teamColors[ti] : '';
+        const badge = ti != null ? teamLabels[ti] : '';
+        return `<button class="mm-pick-btn ${cls}" data-pid="${p.id}">
+          <span class="mpb-badge">${badge || '　'}</span>
+          <span>${escapeHtml(p.name)}</span>
+        </button>`;
+      }).join('')}
+    </div>`;
+  }
+
+  function buildTeamSummary() {
+    return `<div class="mm-team-summary">
+      ${Array.from({length: teamCount}, (_, ti) => {
+        const members = allPlayers.filter(p => assignments[p.id] === ti);
+        const chipStyle = `background:${teamBgVars[ti]};color:#fff;`;
+        if (!members.length) return `<span class="mm-summary-chip" style="${chipStyle};opacity:0.4;">${teamLabels[ti]} 0명</span>`;
+        return `<span class="mm-summary-chip" style="${chipStyle}">${teamLabels[ti]} ${members.length}명</span>`;
+      }).join('')}
+    </div>`;
+  }
+
+  function buildRoundsHtml() {
+    return rounds.map(r => {
+      const la = teamLabels[r.t1] || 'A팀';
+      const lb = teamLabels[r.t2] || 'B팀';
+      return `
+      <div class="mm-round-row">
+        <span class="mm-round-label">${r.id}R</span>
+        <span style="font-size:10px;font-weight:700;color:var(--text-3);min-width:48px;">${la} vs ${lb}</span>
+        <select class="select" data-rid="${r.id}" style="flex:1;font-size:12px;">
+          <option value="">-</option>
+          <option value="t1" ${r.winner==='t1'?'selected':''}>${la} 승</option>
+          <option value="draw" ${r.winner==='draw'?'selected':''}>무승부</option>
+          <option value="t2" ${r.winner==='t2'?'selected':''}>${lb} 승</option>
+        </select>
+      </div>`;
+    }).join('');
+  }
 
   function buildModalHtml() {
-    const teamLetters = ['A', 'B', 'C'];
-    const teamsHtml = Array.from({ length: teamCount }, (_, ti) => `
-      <div style="margin-bottom:12px;">
-        <div style="font-size:10px;font-weight:800;color:var(--text-2);letter-spacing:0.06em;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
-          <span style="width:18px;height:18px;border-radius:4px;background:var(--team-${['a','b','c'][ti]});color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;">${teamLetters[ti]}</span>
-          ${teamLetters[ti]}팀 선수 (쉼표 구분)
-        </div>
-        <input class="input" id="mm-team-${ti}" placeholder="예: 홍길동, 이순신, 강감찬" style="font-size:12px;">
-      </div>
-    `).join('');
-    const roundsHtml = rounds.map(r => `
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;font-size:12px;">
-        <span style="width:32px;font-weight:800;color:var(--text-2);">${r.id}R</span>
-        <select class="select" data-rid="${r.id}" style="flex:1;">
-          <option value="">-</option>
-          <option value="t1">${teamLetters[r.t1]}팀 승</option>
-          <option value="draw">무승부</option>
-          <option value="t2">${teamLetters[r.t2]}팀 승</option>
-        </select>
-      </div>
-    `).join('');
+    const dateVal = existing ? (existing.date || today) : today;
     return `
-      <h3 style="margin-bottom:14px;">누락 경기 기록 추가</h3>
+      <h3 style="margin-bottom:14px;">${existing ? '누락 기록 수정' : '누락 경기 기록 추가'}</h3>
       <div class="field">
         <label>경기 날짜</label>
-        <input class="input" type="date" id="mm-date" value="${today}">
+        <input class="input" type="date" id="mm-date" value="${dateVal}">
       </div>
       <div class="field">
         <label>팀 수</label>
@@ -3866,54 +3949,132 @@ function openManualMatchModal() {
         </div>
       </div>
       <div class="field">
-        <label>팀별 선수</label>
-        ${teamsHtml}
+        <label style="margin-bottom:6px;">선수 배정 <span style="font-size:10px;font-weight:500;color:var(--text-3);">탭으로 팀 변경</span></label>
+        <div id="mm-grid-wrap">
+          ${buildPlayerGrid()}
+        </div>
+        <div id="mm-summary-wrap">
+          ${buildTeamSummary()}
+        </div>
       </div>
       <div class="field">
         <label>라운드 결과</label>
-        ${roundsHtml}
+        <div id="mm-rounds-wrap">
+          ${buildRoundsHtml()}
+        </div>
       </div>
       <div style="display:flex;gap:8px;margin-top:14px;flex-direction:column;">
-        <button class="btn btn-accent btn-block" id="mm-save">저장</button>
+        <button class="btn btn-accent btn-block" id="mm-save">${existing ? '수정 저장' : '저장'}</button>
         <button class="btn btn-outline btn-block" data-modal-close>취소</button>
       </div>
     `;
   }
 
+  function refreshGrid() {
+    const wrap = $('#mm-grid-wrap');
+    const sumWrap = $('#mm-summary-wrap');
+    if (wrap) wrap.innerHTML = buildPlayerGrid();
+    if (sumWrap) sumWrap.innerHTML = buildTeamSummary();
+    attachGridEvents();
+  }
+
+  function attachGridEvents() {
+    document.querySelectorAll('.mm-pick-btn').forEach(btn => {
+      btn.onclick = () => {
+        const pid = btn.dataset.pid;
+        const cur = assignments[pid] != null ? assignments[pid] : -1;
+        const next = (cur + 1) % (teamCount + 1);
+        if (next === teamCount) { delete assignments[pid]; }
+        else { assignments[pid] = next; }
+        refreshGrid();
+      };
+    });
+  }
+
   function attach() {
-    $('#mm-2t').onclick = () => { teamCount = 2; rounds = generateRounds(2); showModal(buildModalHtml()); attach(); };
-    $('#mm-3t').onclick = () => { teamCount = 3; rounds = generateRounds(3); showModal(buildModalHtml()); attach(); };
+    const saveDate = () => {
+      const d = $('#mm-date');
+      return d ? d.value : today;
+    };
+
+    $('#mm-2t').onclick = () => {
+      teamCount = 2;
+      // clear C assignments
+      Object.keys(assignments).forEach(pid => { if (assignments[pid] === 2) delete assignments[pid]; });
+      rounds = generateRounds(2);
+      const dateVal = saveDate();
+      showModal(buildModalHtml());
+      $('#mm-date').value = dateVal;
+      attach();
+    };
+    $('#mm-3t').onclick = () => {
+      teamCount = 3;
+      rounds = generateRounds(3);
+      const dateVal = saveDate();
+      showModal(buildModalHtml());
+      $('#mm-date').value = dateVal;
+      attach();
+    };
+
+    attachGridEvents();
+
     $('#mm-save').onclick = async () => {
       if (!await ensureAdmin()) return;
       const date = $('#mm-date').value;
       if (!date) { toast('날짜를 입력해주세요', 'err'); return; }
+
+      // Collect teams — store current stats from state.players
       const teams = Array.from({ length: teamCount }, (_, ti) => {
-        const raw = ($(`#mm-team-${ti}`).value || '').split(',').map(s => s.trim()).filter(Boolean);
-        const registeredPlayers = Object.values(state.players || {});
-        const members = raw.map(name => {
-          const match = registeredPlayers.find(p => p.name === name);
-          return match ? { id: match.id, name: match.name } : { id: 'manual_' + uid(), name };
-        });
+        const members = allPlayers
+          .filter(p => assignments[p.id] === ti)
+          .map(p => {
+            const full = state.players[p.id] || p;
+            return {
+              id: full.id,
+              name: full.name,
+              att: full.att || 5,
+              def: full.def || 5,
+              spd: full.spd || 5,
+              pas: full.pas || 5,
+              sta: full.sta || 5,
+              org: full.org || 5,
+              score: calcScore(full) || 6,
+            };
+          });
         return { members };
       });
+
       const emptyTeam = teams.find(t => !t.members.length);
-      if (emptyTeam) { toast('모든 팀에 선수를 입력해주세요', 'err'); return; }
+      if (emptyTeam) { toast('모든 팀에 선수를 배정해주세요', 'err'); return; }
+
       const updatedRounds = rounds.map(r => {
         const sel = document.querySelector(`select[data-rid="${r.id}"]`);
         return { ...r, winner: sel ? (sel.value || null) : null };
       });
-      const newId = 'manual_' + uid();
-      await db.ref('matches/' + newId).set({
-        id: newId,
-        title: `${date} 경기`,
-        date,
-        status: 'finished',
-        createdAt: Date.now(),
-        teams,
-        rounds: updatedRounds,
-      });
-      closeModal();
-      toast('기록 추가됨', 'ok');
+
+      if (existing) {
+        await db.ref('matches/' + existingId).update({
+          title: `${date} 경기`,
+          date,
+          teams,
+          rounds: updatedRounds,
+        });
+        closeModal();
+        toast('수정되었습니다', 'ok');
+      } else {
+        const newId = 'manual_' + uid();
+        await db.ref('matches/' + newId).set({
+          id: newId,
+          title: `${date} 경기`,
+          date,
+          status: 'finished',
+          createdAt: Date.now(),
+          teams,
+          rounds: updatedRounds,
+        });
+        closeModal();
+        toast('기록 추가됨', 'ok');
+      }
     };
   }
 
