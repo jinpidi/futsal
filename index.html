@@ -2126,11 +2126,17 @@ function openMatchDetail(id) {
 
 function showFinishedMatchDetail(m) {
   const stand = computeStandings(m);
+  const enrichMems = (members) => (members || []).map(p => {
+    const full = p.id && !isGuestPlayer(p) ? (state.players[p.id] || null) : null;
+    return full ? { ...full, ...p } : p;
+  });
+  const isManualMatch = String(m.id || '').startsWith('manual_');
   const ranks = stand.map((s, idx) => {
     const team = m.teams[s.id - 1];
     const ti = s.id - 1;
-    const showRating = (team.members || []).length >= 5;
-    const rating = showRating ? Math.round(calculateTeamScore(team.members) * 10) : null;
+    const enriched = enrichMems(team.members);
+    const minN = isManualMatch ? 1 : 5;
+    const rating = enriched.length >= minN ? Math.round(calculateTeamScore(enriched) * 10) : null;
     return {
       rank: idx + 1, ti,
       members: (team.members || []).map(p => p.name).join(', '),
@@ -3098,7 +3104,7 @@ function balanceDraft(players, teamN) {
 }
 
 function isGuestPlayer(p) {
-  return !p || !p.id || String(p.id).startsWith('guest_') || String(p.id).startsWith('m_');
+  return !p || !p.id || String(p.id).startsWith('guest_') || String(p.id).startsWith('m_') || String(p.id).startsWith('manual_');
 }
 function guestPlayerWithId(id, name) {
   const avg = teamAvgStats();
@@ -3672,10 +3678,19 @@ function renderHistoryList(archived) {
   const sorted = [...archived].sort((a, b) => (b.finishedAt || b.createdAt || 0) - (a.finishedAt || a.createdAt || 0));
   root.innerHTML = sorted.map(m => {
     const stand = computeStandings(m);
+    // 등록 선수라면 현재 state.players 스탯으로 enrich (수기 기록 포함)
+    const enrichMembers = (members) => (members || []).map(p => {
+      const full = p.id && !isGuestPlayer(p) ? (state.players[p.id] || null) : null;
+      return full ? { ...full, ...p } : p;  // 저장된 id/name 우선, 스탯은 최신 state에서
+    });
     const ranks = stand.map((s, idx) => {
       const team = m.teams[s.id - 1];
       const ti = s.id - 1;
-      const teamScore = (team.members || []).length >= 5 ? calculateTeamScore(team.members) : null;
+      const enriched = enrichMembers(team.members);
+      // 수기 기록은 인원 제한 없이 RTG 산출, 일반 경기는 5명+ 유지
+      const isManual = String(m.id || '').startsWith('manual_');
+      const minForRating = isManual ? 1 : 5;
+      const teamScore = enriched.length >= minForRating ? calculateTeamScore(enriched) : null;
       return {
         rank: idx + 1, ti,
         members: (team.members || []).map(p => p.name).join(', '),
