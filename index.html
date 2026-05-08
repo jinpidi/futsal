@@ -516,13 +516,13 @@
   /* 타인이 투표한 버튼: 상태별 컬러 */
   .pick-btn.vote-attend  { background: #d1fae5; border-color: var(--accent); }
   .pick-btn.vote-maybe   { background: #fef3c7; border-color: var(--warn); }
-  .pick-btn.vote-decline { background: var(--danger-soft); border-color: var(--danger); color: var(--text-3); text-decoration: line-through; }
+  .pick-btn.vote-decline { background: #f1f5f9; border-color: #94a3b8; color: #94a3b8; text-decoration: line-through; }
   .pick-btn .pb-vote-bar {
     width: 18px; height: 3px; border-radius: 2px; flex-shrink: 0;
   }
   .pick-btn.vote-attend  .pb-vote-bar { background: var(--accent); }
   .pick-btn.vote-maybe   .pb-vote-bar { background: var(--warn); }
-  .pick-btn.vote-decline .pb-vote-bar { background: var(--danger); opacity: 0.5; }
+  .pick-btn.vote-decline .pb-vote-bar { background: #94a3b8; }
   .pick-btn.picked .pb-vote-bar { background: rgba(255,255,255,0.5); }
 
   .vote-action-grid { display: flex; gap: 6px; margin: 10px 0 6px; }
@@ -613,6 +613,16 @@
   .roster-item.waitlist { background: var(--warn-soft); }
   .roster-item.waitlist .roster-num { color: #b45309; font-weight: 900; }
   .roster-item.waitlist .roster-icon { color: var(--warn); }
+  /* 2-column confirmed grid */
+  .roster-confirmed-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+  .ric {
+    display: flex; align-items: center; gap: 4px;
+    background: var(--surface-2); border-radius: 7px;
+    padding: 5px 7px; min-width: 0;
+  }
+  .ric-num { font-size: 9px; font-weight: 900; color: var(--accent-2); min-width: 14px; flex-shrink: 0; }
+  .ric-name { font-size: 12px; font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .ric-time { font-size: 9px; font-weight: 600; color: var(--text-3); flex-shrink: 0; white-space: nowrap; }
   /* compact chip layouts for maybe/decline/no-vote */
   .status-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0; }
   .status-chip {
@@ -627,7 +637,7 @@
   }
   .status-chip svg { width: 9px; height: 9px; stroke-width: 3; flex-shrink: 0; }
   .status-chip.sc-maybe { background: #fff7ed; color: #92400e; border: 1px solid #fed7aa; }
-  .status-chip.sc-decline { background: var(--danger-soft); color: #991b1b; border: 1px solid #fca5a5; }
+  .status-chip.sc-decline { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
   .novote-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0; }
   .novote-chip {
     font-size: 11px;
@@ -2377,14 +2387,13 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
   html += `</div>`;
 
   if (confirmed.length) {
-    html += `<div class="roster-list">`;
+    html += `<div class="roster-confirmed-grid">`;
     confirmed.forEach(([pid, v], i) => {
       const name = (state.players[pid] && state.players[pid].name) || v.name || '게스트';
-      html += `<div class="roster-item">
-        <span class="roster-num">${i + 1}</span>
-        <span class="roster-icon">${svgRaw('check')}</span>
-        <span class="roster-name">${escapeHtml(name)}</span>
-        <span class="roster-time">${fmtVoteTimestamp(v.ts)}</span>
+      html += `<div class="ric">
+        <span class="ric-num">${i + 1}</span>
+        <span class="ric-name">${escapeHtml(name)}</span>
+        <span class="ric-time">${fmtVoteTimestamp(v.ts)}</span>
       </div>`;
     });
     html += `</div>`;
@@ -2427,7 +2436,7 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
     if (declines.length) {
       if (maybes.length) html += `<div style="height:1px;background:var(--border);margin-bottom:8px;"></div>`;
       html += `<div style="margin-bottom:${noVotePlayers.length ? '8px' : '0'};">`;
-      html += `<div style="font-size:10px;font-weight:800;color:#991b1b;letter-spacing:0.04em;margin-bottom:4px;">불참 (${declines.length})</div>`;
+      html += `<div style="font-size:10px;font-weight:800;color:#64748b;letter-spacing:0.04em;margin-bottom:4px;">불참 (${declines.length})</div>`;
       html += `<div class="status-chips">`;
       declines.forEach(([pid, v]) => {
         const name = (state.players[pid] && state.players[pid].name) || v.name || '게스트';
@@ -2796,9 +2805,8 @@ function renderTeamBuilderPage() {
         ${state.isAdmin ? `
           <button class="btn btn-sm btn-outline" id="tb-2t">2팀</button>
           <button class="btn btn-sm btn-outline" id="tb-3t">3팀</button>
-          <button class="btn btn-sm btn-outline" id="tb-balance" title="팀 점수 균형 배분">⚖︎균형</button>
+          <button class="btn btn-sm btn-outline" id="tb-balance">⚖︎ 균형</button>
           <button class="btn btn-sm btn-outline" id="tb-shuffle"><span class="bn-ic">${svgRaw('shuffle')}</span>랜덤</button>
-          <button class="btn btn-sm btn-outline" id="tb-add-guest"><span class="bn-ic">${svgRaw('plus')}</span>게스트</button>
         ` : ''}
         <div class="tb-toolbar-spacer"></div>
         <button class="btn btn-sm btn-accent" id="tb-share"><span class="bn-ic">${svgRaw('link')}</span>공유</button>
@@ -2808,6 +2816,7 @@ function renderTeamBuilderPage() {
 
     <div class="tb-footer">
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-back-recruiting" title="모집중으로 되돌리기">← 모집중</button>` : ''}
+      ${state.isAdmin ? `<button class="btn btn-outline" id="tb-add-guest"><span class="bn-ic">${svgRaw('plus')}</span>게스트</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-save-plan">편성 저장</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-accent" id="tb-start-game">경기 시작</button>` : ''}
     </div>
@@ -3026,15 +3035,47 @@ function snakeDraft(players, teamN) {
 // 팀 점수 합계가 최대한 비슷하게 greedy 배분
 function balanceDraft(players, teamN) {
   if (teamN < 2) teamN = 2;
-  const sorted = [...players].sort((a, b) => (calcScore(b) || 6) - (calcScore(a) || 6));
-  const teams  = Array.from({ length: teamN }, () => ({ members: [] }));
-  const totals = new Array(teamN).fill(0);
-  sorted.forEach(p => {
-    const minIdx = totals.indexOf(Math.min(...totals));
-    teams[minIdx].members.push(p);
-    totals[minIdx] += calcScore(p) || 6;
-  });
-  return teams;
+  if (!players.length) return Array.from({ length: teamN }, () => ({ members: [] }));
+
+  const sc = p => calcScore(p) || 6;
+  const avgDiff = teams => {
+    const avgs = teams.map(t => t.members.length ? t.tot / t.members.length : 0);
+    return Math.max(...avgs) - Math.min(...avgs);
+  };
+
+  const tryOnce = (arr) => {
+    const teams = Array.from({ length: teamN }, () => ({ members: [], tot: 0 }));
+    arr.forEach(p => {
+      // 평균이 가장 낮은 팀에 배정 (tot/members.length 기준, 빈 팀 우선)
+      let minIdx = 0, minAvg = Infinity;
+      teams.forEach((t, i) => {
+        const avg = t.members.length === 0 ? -Infinity : t.tot / t.members.length;
+        if (avg < minAvg) { minAvg = avg; minIdx = i; }
+      });
+      teams[minIdx].members.push(p);
+      teams[minIdx].tot += sc(p);
+    });
+    return teams;
+  };
+
+  let best = null, bestDiff = Infinity;
+  const TARGET = 0.3;
+  const MAX_TRIES = 400;
+
+  for (let i = 0; i < MAX_TRIES; i++) {
+    // 매 시도마다 다르게 셔플
+    const shuffled = [...players].sort(() => Math.random() - 0.5);
+    const result = tryOnce(shuffled);
+    const diff = avgDiff(result);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = result;
+      if (bestDiff <= TARGET) break;
+    }
+  }
+
+  // tot 임시 필드 제거 후 반환
+  return best.map(t => ({ members: t.members }));
 }
 
 function isGuestPlayer(p) {
