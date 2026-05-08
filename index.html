@@ -1278,11 +1278,10 @@
   }
   .seg.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
   .player-row {
-    display: grid;
-    grid-template-columns: minmax(0,1fr) auto;
-    gap: 8px;
-    align-items: center;
-    padding: 9px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 10px 12px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -1291,38 +1290,37 @@
     transition: all .12s;
   }
   .player-row:hover { border-color: var(--border-2); background: var(--surface-2); }
-  .pr-name-row { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
-  .player-row .pr-name { font-weight: 800; font-size: 13px; color: var(--text); word-break: keep-all; line-height: 1.2; }
-  .pr-score-badge { font-size: 11px; font-weight: 900; color: var(--accent-2); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .pr-top-row { display: flex; align-items: center; gap: 6px; }
+  .player-row .pr-name { font-weight: 800; font-size: 13.5px; color: var(--text); word-break: keep-all; line-height: 1.2; flex: 1; }
+  .pr-score-badge {
+    font-size: 12px; font-weight: 900; color: #fff;
+    background: var(--accent-2); border-radius: 6px;
+    padding: 1px 6px; flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
   .player-row .pr-pos {
-    font-size: 9px;
-    color: var(--text-3);
-    font-weight: 700;
-    display: block;
-    margin-top: 2px;
-    letter-spacing: 0.02em;
+    font-size: 9.5px; color: var(--text-3); font-weight: 700;
+    border: 1px solid var(--border); border-radius: 5px;
+    padding: 1px 5px; flex-shrink: 0; letter-spacing: 0.02em;
   }
-  .player-row-stats { display: flex; gap: 3px; flex-wrap: wrap; justify-content: flex-end; }
+  .player-row-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 3px; }
   .pr-stat-chip {
-    font-size: 9px;
-    font-weight: 700;
-    padding: 2px 5px;
-    background: var(--surface-3);
-    border-radius: 4px;
-    color: var(--text-3);
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    white-space: nowrap;
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    background: var(--surface-3); border-radius: 5px;
+    padding: 3px 2px;
   }
-  .pr-stat-chip strong { color: var(--text); font-weight: 900; font-size: 9.5px; }
+  .pr-stat-chip .sc-label { font-size: 8px; font-weight: 700; color: var(--text-3); letter-spacing: 0.02em; }
+  .pr-stat-chip .sc-val { font-size: 10.5px; font-weight: 900; color: var(--text); line-height: 1; }
+  .pr-stat-chip .sc-bar { width: 100%; height: 2.5px; border-radius: 2px; background: var(--border); margin-top: 2px; overflow: hidden; }
+  .pr-stat-chip .sc-bar-fill { height: 100%; border-radius: 2px; background: var(--accent); }
 
   .stat-slider-row {
     display: grid;
-    grid-template-columns: 50px 1fr 30px;
-    gap: 10px;
+    grid-template-columns: 48px minmax(0,1fr) 28px;
+    gap: 8px;
     align-items: center;
     margin-bottom: 8px;
+    min-width: 0;
   }
   .stat-slider-row .ss-lbl { font-size: 11px; font-weight: 800; color: var(--text-2); }
   .stat-slider-row .ss-val { font-size: 13px; font-weight: 900; color: var(--accent-2); text-align: right; }
@@ -1385,14 +1383,18 @@
     width: 100%;
     max-width: 420px;
     padding: 20px;
-    max-height: 92vh;
+    max-height: 90vh;
     overflow-y: auto;
+    overflow-x: hidden;
     box-shadow: var(--shadow-lg);
+    box-sizing: border-box;
   }
+  .modal-card * { box-sizing: border-box; }
+  .modal-card .input, .modal-card .select { width: 100%; min-width: 0; }
   .modal-card h3 { margin: 0 0 12px; font-size: 16px; font-weight: 800; color: var(--text); }
   .field { margin-bottom: 12px; }
   /* 누락 기록 모달 플레이어 피커 */
-  .mm-player-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+  .mm-player-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; width: 100%; min-width: 0; }
   .mm-pick-btn {
     padding: 6px 4px 5px;
     border-radius: 8px;
@@ -1713,7 +1715,7 @@ function isPastDate(iso) {
   return iso < todayIso();
 }
 function calcScore(p) {
-  const sum = STATS_KEYS.reduce((a, k) => a + (Number(p[k]) || 0), 0);
+  const sum = STATS_KEYS.reduce((a, k) => a + (Number(p[k]) || 6), 0);
   return Math.round((sum / STATS_KEYS.length) * 10) / 10;
 }
 function teamAvgStats() {
@@ -4101,15 +4103,22 @@ function renderAdminPage() {
       <div id="adm-grid">
         ${players.map(p => `
           <div class="player-row" data-pid="${p.id}">
-            <div>
-              <div class="pr-name-row">
-                <span class="pr-name">${escapeHtml(p.name)}</span>
-                <span class="pr-score-badge">${calcScore(p).toFixed(1)}</span>
-              </div>
+            <div class="pr-top-row">
+              <span class="pr-name">${escapeHtml(p.name)}</span>
+              <span class="pr-score-badge">${calcScore(p).toFixed(1)}</span>
               <span class="pr-pos">${escapeHtml(normalizePos(p.position))}</span>
             </div>
             <div class="player-row-stats">
-              ${STATS_KEYS.map(k => `<span class="pr-stat-chip">${STATS_LABELS[k]}<strong>${p[k] || 6}</strong></span>`).join('')}
+              ${STATS_KEYS.map(k => {
+                const v = p[k] || 6;
+                const pct = Math.round((v / 10) * 100);
+                const barColor = v >= 8 ? '#10b981' : v >= 6 ? '#3b82f6' : v >= 4 ? '#f59e0b' : '#ef4444';
+                return `<span class="pr-stat-chip">
+                  <span class="sc-label">${STATS_LABELS[k]}</span>
+                  <span class="sc-val" style="color:${barColor}">${v}</span>
+                  <span class="sc-bar"><span class="sc-bar-fill" style="width:${pct}%;background:${barColor}"></span></span>
+                </span>`;
+              }).join('')}
             </div>
           </div>
         `).join('')}
