@@ -10,6 +10,8 @@
 <meta property="og:type" content="website">
 <meta property="og:title" content="kkabi">
 <meta property="og:description" content="우리의 경기는 더 재밌어야 한다">
+<meta property="og:image" content="">
+<meta property="og:url" content="">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
@@ -2155,7 +2157,7 @@ function openMatchDetail(id) {
     </div>
   `);
 
-  $('#md-copy-share').onclick = () => copyText(shareUrl);
+  $('#md-copy-share').onclick = () => triggerShare(shareUrl, 'vote', m.title);
   const goBuilderBtn = $('#md-go-builder');
   if (goBuilderBtn) goBuilderBtn.onclick = async () => {
     if (!await ensureAdmin()) return;
@@ -2328,6 +2330,7 @@ function renderVotePage() {
     root.innerHTML = `<div class="empty"><div class="empty-icon">${svgRaw('info')}</div>경기를 찾을 수 없어요</div>`;
     return;
   }
+  updateOgTags('vote', m.title);
   const status = computeStatus(m);
   const votes = m.votes || {};
   const attendees = Object.entries(votes).filter(([_, v]) => v.status === 'attend').sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
@@ -3006,8 +3009,9 @@ function renderTeamBuilderPage() {
     };
   }
   const shareTeam = () => {
-    // 클립보드 복사는 유저 제스처 컨텍스트 안에서 즉시 실행해야 함
-    copyText(buildTeamShareUrl(state.currentMatchId));
+    const matchTitle = (state.matches[state.currentMatchId] || {}).title;
+    // Web Share API는 유저 제스처 안에서 즉시 호출해야 하므로 triggerShare 동기 시작
+    triggerShare(buildTeamShareUrl(state.currentMatchId), 'team', matchTitle);
     // 저장은 비동기로 백그라운드 처리
     if (state.isAdmin) {
       _tbActive = readTeamsFromDOM(_tbActive);
@@ -3389,7 +3393,7 @@ function renderLivePage() {
   $$('.round-card .s-btn').forEach(b => {
     b.onclick = () => recordRound(activeId, parseInt(b.dataset.rid, 10), b.dataset.win);
   });
-  $('#lv-share').onclick = () => copyText(buildLiveUrl(activeId));
+  $('#lv-share').onclick = () => triggerShare(buildLiveUrl(activeId), 'live', (state.matches[activeId] || {}).title);
   $('#lv-back').onclick = () => navigate('prematch');
   $('#lv-home').onclick = () => navigate('home');
   $('#lv-prematch').onclick = () => navigate('prematch');
@@ -3457,6 +3461,7 @@ function renderPublicLivePage() {
     root.innerHTML = `<div class="empty">경기를 찾을 수 없어요</div>`;
     return;
   }
+  updateOgTags('live', m.title);
   if (!m.teams) {
     root.innerHTML = `
       <div class="vote-hero"><h1>${escapeHtml(m.title)}</h1><div class="v-date">${fmtDate(m.date)}</div></div>
@@ -3516,6 +3521,7 @@ function renderTeamSharePage() {
     root.innerHTML = `<div class="empty">경기를 찾을 수 없어요</div>`;
     return;
   }
+  updateOgTags('team', m.title);
   if (!m.teams || !m.teams.length) {
     root.innerHTML = `
       <div style="padding:8px 0 4px;">
@@ -4344,6 +4350,174 @@ function fallbackCopy(text) {
 }
 
 /* ===========================================================
+   SHARE SYSTEM — context-aware thumbnails & Web Share API
+   =========================================================== */
+function _mkShareSvg(type) {
+  if (type === 'vote') return `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='315'>
+<defs>
+  <linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'>
+    <stop offset='0%' stop-color='#0a2d1f'/><stop offset='100%' stop-color='#053920'/>
+  </linearGradient>
+</defs>
+<rect width='600' height='315' fill='url(#bg)'/>
+<circle cx='530' cy='20' r='190' fill='#10b981' fill-opacity='0.07'/>
+<circle cx='50' cy='300' r='130' fill='#10b981' fill-opacity='0.05'/>
+<circle cx='300' cy='128' r='55' fill='#0a3d25' stroke='#10b981' stroke-width='2'/>
+<polygon points='300,82 318,96 311,117 289,117 282,96' fill='none' stroke='#6ee7b7' stroke-width='1.5' stroke-linejoin='round'/>
+<line x1='300' y1='73' x2='300' y2='82' stroke='#6ee7b7' stroke-width='1.5'/>
+<line x1='319' y1='88' x2='344' y2='79' stroke='#6ee7b7' stroke-width='1.5'/>
+<line x1='311' y1='118' x2='331' y2='136' stroke='#6ee7b7' stroke-width='1.5'/>
+<line x1='289' y1='118' x2='269' y2='136' stroke='#6ee7b7' stroke-width='1.5'/>
+<line x1='281' y1='88' x2='256' y2='79' stroke='#6ee7b7' stroke-width='1.5'/>
+<rect x='68' y='88' width='66' height='60' rx='7' fill='none' stroke='#10b981' stroke-width='1.5' stroke-opacity='0.6'/>
+<line x1='68' y1='104' x2='134' y2='104' stroke='#10b981' stroke-width='1.5' stroke-opacity='0.6'/>
+<rect x='84' y='80' width='8' height='16' rx='4' fill='#10b981' fill-opacity='0.7'/>
+<rect x='106' y='80' width='8' height='16' rx='4' fill='#10b981' fill-opacity='0.7'/>
+<circle cx='88' cy='120' r='4' fill='#6ee7b7' fill-opacity='0.65'/>
+<circle cx='101' cy='120' r='4' fill='#6ee7b7' fill-opacity='0.65'/>
+<circle cx='114' cy='120' r='4' fill='#6ee7b7' fill-opacity='0.65'/>
+<circle cx='88' cy='136' r='4' fill='#6ee7b7' fill-opacity='0.35'/>
+<circle cx='101' cy='136' r='4' fill='#6ee7b7' fill-opacity='0.6'/>
+<text x='300' y='203' text-anchor='middle' font-family='system-ui,sans-serif' font-size='25' font-weight='800' fill='#ffffff'>참석 여부를 알려주세요</text>
+<text x='300' y='227' text-anchor='middle' font-family='system-ui,sans-serif' font-size='13' font-weight='500' fill='#6ee7b7'>풋살 매칭 투표 · kkabi</text>
+<rect x='148' y='248' width='84' height='34' rx='17' fill='#10b981'/>
+<text x='190' y='270' text-anchor='middle' font-family='system-ui,sans-serif' font-size='14' font-weight='700' fill='#ffffff'>참석</text>
+<rect x='258' y='248' width='84' height='34' rx='17' fill='none' stroke='#10b981' stroke-width='1.5'/>
+<text x='300' y='270' text-anchor='middle' font-family='system-ui,sans-serif' font-size='14' font-weight='600' fill='#6ee7b7'>미정</text>
+<rect x='368' y='248' width='84' height='34' rx='17' fill='none' stroke='#10b981' stroke-width='1.5' stroke-opacity='0.45'/>
+<text x='410' y='270' text-anchor='middle' font-family='system-ui,sans-serif' font-size='14' font-weight='600' fill='#6ee7b7' fill-opacity='0.55'>불참</text>
+</svg>`;
+
+  if (type === 'team') return `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='315'>
+<defs>
+  <linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'>
+    <stop offset='0%' stop-color='#0f172a'/><stop offset='100%' stop-color='#0c1a38'/>
+  </linearGradient>
+  <linearGradient id='fd' x1='0' y1='0' x2='0' y2='1'>
+    <stop offset='0%' stop-color='#14532d' stop-opacity='0.45'/>
+    <stop offset='100%' stop-color='#052e16' stop-opacity='0.45'/>
+  </linearGradient>
+</defs>
+<rect width='600' height='315' fill='url(#bg)'/>
+<circle cx='300' cy='155' r='210' fill='#10b981' fill-opacity='0.03'/>
+<text x='300' y='28' text-anchor='middle' font-family='system-ui,sans-serif' font-size='22' font-weight='800' fill='#ffffff'>오늘 라인업이 나왔어요</text>
+<rect x='88' y='46' width='424' height='218' rx='8' fill='url(#fd)' stroke='#10b981' stroke-width='1.5' stroke-opacity='0.55'/>
+<circle cx='300' cy='155' r='40' fill='none' stroke='#10b981' stroke-width='1' stroke-opacity='0.45'/>
+<circle cx='300' cy='155' r='4' fill='#10b981' fill-opacity='0.7'/>
+<line x1='300' y1='46' x2='300' y2='264' stroke='#10b981' stroke-width='1' stroke-opacity='0.35'/>
+<rect x='88' y='105' width='44' height='100' rx='4' fill='none' stroke='#10b981' stroke-width='1' stroke-opacity='0.35'/>
+<rect x='468' y='105' width='44' height='100' rx='4' fill='none' stroke='#10b981' stroke-width='1' stroke-opacity='0.35'/>
+<circle cx='168' cy='155' r='12' fill='#3b82f6' stroke='#fff' stroke-width='2'/>
+<circle cx='146' cy='108' r='12' fill='#3b82f6' stroke='#fff' stroke-width='2'/>
+<circle cx='146' cy='202' r='12' fill='#3b82f6' stroke='#fff' stroke-width='2'/>
+<circle cx='216' cy='126' r='12' fill='#3b82f6' stroke='#fff' stroke-width='2' opacity='0.9'/>
+<circle cx='216' cy='184' r='12' fill='#3b82f6' stroke='#fff' stroke-width='2' opacity='0.9'/>
+<text x='168' y='159' text-anchor='middle' font-family='system-ui,sans-serif' font-size='9' font-weight='900' fill='#fff'>A</text>
+<text x='146' y='112' text-anchor='middle' font-family='system-ui,sans-serif' font-size='9' font-weight='900' fill='#fff'>A</text>
+<text x='146' y='206' text-anchor='middle' font-family='system-ui,sans-serif' font-size='9' font-weight='900' fill='#fff'>A</text>
+<text x='216' y='130' text-anchor='middle' font-family='system-ui,sans-serif' font-size='9' font-weight='900' fill='#fff'>A</text>
+<text x='216' y='188' text-anchor='middle' font-family='system-ui,sans-serif' font-size='9' font-weight='900' fill='#fff'>A</text>
+<circle cx='432' cy='155' r='12' fill='#ef4444' stroke='#fff' stroke-width='2'/>
+<circle cx='454' cy='108' r='12' fill='#ef4444' stroke='#fff' stroke-width='2'/>
+<circle cx='454' cy='202' r='12' fill='#ef4444' stroke='#fff' stroke-width='2'/>
+<circle cx='384' cy='126' r='12' fill='#ef4444' stroke='#fff' stroke-width='2' opacity='0.9'/>
+<circle cx='384' cy='184' r='12' fill='#ef4444' stroke='#fff' stroke-width='2' opacity='0.9'/>
+<text x='432' y='159' text-anchor='middle' font-family='system-ui,sans-serif' font-size='9' font-weight='900' fill='#fff'>B</text>
+<text x='454' y='112' text-anchor='middle' font-family='system-ui,sans-serif' font-size='9' font-weight='900' fill='#fff'>B</text>
+<text x='454' y='206' text-anchor='middle' font-family='system-ui,sans-serif' font-size='9' font-weight='900' fill='#fff'>B</text>
+<text x='384' y='130' text-anchor='middle' font-family='system-ui,sans-serif' font-size='9' font-weight='900' fill='#fff'>B</text>
+<text x='384' y='188' text-anchor='middle' font-family='system-ui,sans-serif' font-size='9' font-weight='900' fill='#fff'>B</text>
+<text x='300' y='303' text-anchor='middle' font-family='system-ui,sans-serif' font-size='12' font-weight='600' fill='#475569'>kkabi · 풋살 팀 편성</text>
+</svg>`;
+
+  if (type === 'live') return `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='315'>
+<defs>
+  <linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'>
+    <stop offset='0%' stop-color='#1c0a00'/><stop offset='100%' stop-color='#3d1200'/>
+  </linearGradient>
+  <linearGradient id='gld' x1='0' y1='0' x2='0' y2='1'>
+    <stop offset='0%' stop-color='#fde68a'/><stop offset='100%' stop-color='#d97706'/>
+  </linearGradient>
+</defs>
+<rect width='600' height='315' fill='url(#bg)'/>
+<circle cx='300' cy='118' r='130' fill='#f59e0b' fill-opacity='0.08'/>
+<circle cx='530' cy='30' r='110' fill='#f59e0b' fill-opacity='0.04'/>
+<path d='M246 52 L354 52 L338 150 Q300 164 262 150 Z' fill='url(#gld)' opacity='0.92'/>
+<path d='M246 82 Q214 82 214 114 Q214 146 246 150' fill='none' stroke='url(#gld)' stroke-width='11' stroke-linecap='round' opacity='0.85'/>
+<path d='M354 82 Q386 82 386 114 Q386 146 354 150' fill='none' stroke='url(#gld)' stroke-width='11' stroke-linecap='round' opacity='0.85'/>
+<rect x='270' y='150' width='60' height='11' rx='4' fill='#f59e0b' opacity='0.88'/>
+<rect x='254' y='161' width='92' height='14' rx='6' fill='#fbbf24' opacity='0.92'/>
+<polygon points='204,86 207,97 219,97 210,104 213,115 204,109 195,115 198,104 189,97 201,97' fill='#fde68a' opacity='0.6'/>
+<polygon points='396,98 399,107 410,107 402,113 405,122 396,117 387,122 390,113 382,107 393,107' fill='#fde68a' opacity='0.5'/>
+<polygon points='237,56 239,63 246,63 241,67 243,74 237,70 231,74 233,67 228,63 235,63' fill='#fde68a' opacity='0.45'/>
+<polygon points='363,60 365,67 372,67 367,71 369,78 363,74 357,78 359,71 354,67 361,67' fill='#fde68a' opacity='0.4'/>
+<text x='300' y='220' text-anchor='middle' font-family='system-ui,sans-serif' font-size='26' font-weight='800' fill='#ffffff'>경기 결과 확인하세요</text>
+<text x='300' y='246' text-anchor='middle' font-family='system-ui,sans-serif' font-size='13' font-weight='500' fill='#fbbf24'>kkabi · 풋살 경기 기록</text>
+<rect x='146' y='266' width='92' height='32' rx='16' fill='#78350f' stroke='#f59e0b' stroke-width='1'/>
+<text x='192' y='287' text-anchor='middle' font-family='system-ui,sans-serif' font-size='14' font-weight='700' fill='#fbbf24'>1위</text>
+<rect x='254' y='266' width='92' height='32' rx='16' fill='#78350f' stroke='#f59e0b' stroke-width='1' opacity='0.7'/>
+<text x='300' y='287' text-anchor='middle' font-family='system-ui,sans-serif' font-size='14' font-weight='700' fill='#fbbf24' opacity='0.8'>2위</text>
+<rect x='362' y='266' width='92' height='32' rx='16' fill='#78350f' stroke='#f59e0b' stroke-width='1' opacity='0.5'/>
+<text x='408' y='287' text-anchor='middle' font-family='system-ui,sans-serif' font-size='14' font-weight='700' fill='#fbbf24' opacity='0.6'>3위</text>
+</svg>`;
+
+  return '';
+}
+
+const SHARE_CTX = {
+  vote: {
+    ogTitle: t => `${t} — 경기 참석 여부를 알려주세요`,
+    ogDesc: () => '풋살 경기에 참석하시나요? 투표하고 참석 현황을 확인해보세요.',
+    title: t => `${t} 참석 투표`,
+    text:  t => `${t}\n경기에 참석하시나요? 투표 링크에서 알려주세요.`,
+  },
+  team: {
+    ogTitle: t => `${t} — 오늘 라인업 나왔어요`,
+    ogDesc: () => '팀 편성이 완료됐습니다. 오늘의 라인업을 확인해보세요.',
+    title: t => `${t} 오늘의 라인업`,
+    text:  t => `${t} 팀 편성이 나왔어요!\n오늘의 라인업을 확인해보세요.`,
+  },
+  live: {
+    ogTitle: t => `${t} — 경기 결과`,
+    ogDesc: () => '경기가 끝났습니다. 최종 결과를 확인해보세요.',
+    title: t => `${t} 경기 결과`,
+    text:  t => `${t} 경기가 끝났어요!\n최종 결과를 확인해보세요.`,
+  },
+};
+
+function updateOgTags(type, matchTitle) {
+  const ctx = SHARE_CTX[type];
+  if (!ctx) return;
+  const label = matchTitle || 'kkabi 풋살';
+  const setMeta = (prop, val) => {
+    let el = document.querySelector(`meta[property="${prop}"]`);
+    if (!el) { el = document.createElement('meta'); el.setAttribute('property', prop); document.head.appendChild(el); }
+    el.setAttribute('content', val);
+  };
+  setMeta('og:title', ctx.ogTitle(label));
+  setMeta('og:description', ctx.ogDesc());
+  setMeta('og:url', location.href);
+  const svgStr = _mkShareSvg(type);
+  if (svgStr) setMeta('og:image', 'data:image/svg+xml,' + encodeURIComponent(svgStr));
+  document.title = ctx.ogTitle(label);
+}
+
+async function triggerShare(url, type, matchTitle) {
+  const ctx = SHARE_CTX[type] || SHARE_CTX.vote;
+  const label = matchTitle || 'kkabi 풋살';
+  updateOgTags(type, label);
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: ctx.title(label), text: ctx.text(label), url });
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+    }
+  }
+  copyText(url);
+}
+
+/* ===========================================================
    INIT
    =========================================================== */
 async function init() {
@@ -4357,6 +4531,7 @@ async function init() {
   const route = parseRoute();
 
   if (route.type === 'vote') {
+    updateOgTags('vote', '풋살 경기');
     state.currentMatchId = route.matchId;
     $('#vote-page').style.display = 'block';
     state.page = 'vote';
@@ -4369,6 +4544,7 @@ async function init() {
     return;
   }
   if (route.type === 'public-live') {
+    updateOgTags('live', '풋살 경기');
     state.currentMatchId = route.matchId;
     $('#public-live-page').style.display = 'block';
     state.page = 'public-live';
@@ -4381,6 +4557,7 @@ async function init() {
     return;
   }
   if (route.type === 'team-share') {
+    updateOgTags('team', '풋살 팀 편성');
     state.currentMatchId = route.matchId;
     $('#team-share-page').style.display = 'block';
     state.page = 'team-share';
