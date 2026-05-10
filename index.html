@@ -3545,7 +3545,7 @@ function renderPublicLivePage() {
       </div>
     </div>
     <div class="card">
-      <div class="section-title">라운드 기록 (누구나 입력 가능)</div>
+      <div class="section-title">라운드 기록</div>
       <div id="public-rl">${(m.rounds || []).map(r => roundCardHtml(r)).join('')}</div>
     </div>
     ${m.status === 'finished' ? '' : `<div style="margin-top:14px;"><button class="btn btn-accent btn-block" id="pl-finish">${svgRaw('flag')} 경기 종료 (관리자)</button></div>`}
