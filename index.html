@@ -2638,7 +2638,6 @@ function playAlarm(notifBody) {
       cmp.release.value   = 0.1;
       cmp.connect(ctx.destination);
 
-      // 두 개의 오실레이터를 동시에 울려서 배음 강화
       const beep = (freq, harmonicRatio, delay, dur) => {
         [freq, freq * harmonicRatio].forEach(f => {
           const osc = ctx.createOscillator();
@@ -2647,18 +2646,21 @@ function playAlarm(notifBody) {
           osc.type = 'square';
           osc.frequency.value = f;
           const t = ctx.currentTime + delay;
-          g.gain.setValueAtTime(0.7, t);
-          g.gain.setValueAtTime(0.7, t + dur * 0.75);
+          g.gain.setValueAtTime(0.75, t);
+          g.gain.setValueAtTime(0.75, t + dur * 0.8);
           g.gain.exponentialRampToValueAtTime(0.001, t + dur);
           osc.start(t); osc.stop(t + dur);
         });
       };
-      // 삐삐삐 — 삐—— 삐————
+      // 삐삐삐 — 삐— 삐—— 삐———— (약 5초)
       beep(1047, 1.5, 0.00, 0.18);
-      beep(1047, 1.5, 0.22, 0.18);
-      beep(1047, 1.5, 0.44, 0.18);
-      beep(880,  2.0, 0.72, 0.50);
-      beep(1047, 1.5, 1.30, 0.75);
+      beep(1047, 1.5, 0.23, 0.18);
+      beep(1047, 1.5, 0.46, 0.18);
+      beep(880,  2.0, 0.78, 0.55);
+      beep(1047, 1.5, 1.42, 0.55);
+      beep(880,  2.0, 2.08, 0.80);
+      beep(1047, 1.5, 3.00, 1.20);
+      beep(880,  1.8, 4.30, 0.65);
     };
 
     if (ctx.state === 'suspended') {
@@ -2699,13 +2701,28 @@ function updateTimerDisplay() {
   const now = Date.now();
   let { phase, roundIdx, numRounds, phaseEndAt, roundSecs, breakSecs } = _liveTimer;
 
-  // ── Auto-transition: break → playing or done
-  if (phase === 'break' && phaseEndAt && now >= phaseEndAt) {
+  // ── Auto-transition: playing → break or done (alarm at round END)
+  if (phase === 'playing' && phaseEndAt && now >= phaseEndAt) {
     if (!_liveTimer.alerted) {
       _liveTimer.alerted = true;
-      const nextRd = roundIdx + 1 < numRounds ? `RD ${roundIdx + 2} 시작!` : '전체 경기 완료!';
-      playAlarm(`쉬는시간 종료 · ${nextRd}`);
+      const isLast = roundIdx + 1 >= numRounds;
+      playAlarm(isLast ? `RD ${roundIdx + 1} 종료 · 전체 완료!` : `RD ${roundIdx + 1} 종료 · 쉬는시간`);
     }
+    if (roundIdx + 1 < numRounds) {
+      _liveTimer.phase = 'break';
+      _liveTimer.phaseEndAt = now + breakSecs * 1000;
+      _liveTimer.alerted = false;
+      updateTimerDisplay(); return;
+    } else {
+      _liveTimer.phase = 'done';
+      if (_liveTimer.interval) { clearInterval(_liveTimer.interval); _liveTimer.interval = null; }
+      _releaseWakeLock();
+    }
+    phase = _liveTimer.phase;
+  }
+
+  // ── Auto-transition: break → playing (no alarm, just advance)
+  if (phase === 'break' && phaseEndAt && now >= phaseEndAt) {
     if (roundIdx + 1 < numRounds) {
       _liveTimer.roundIdx = roundIdx + 1;
       _liveTimer.phase = 'playing';
@@ -2754,24 +2771,30 @@ function updateTimerDisplay() {
         </div>
       </div>
       ${_roundDots(roundIdx, numRounds, 'playing')}
-      <button class="btn btn-block" id="lv-t-end" style="margin-top:12px;background:var(--primary);color:#fff;border-radius:10px;font-size:13px;font-weight:800;padding:12px;">⏹ 라운드 종료</button>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:12px;">
+        <button class="btn btn-outline" id="lv-t-rm30" style="flex:1;font-size:12px;font-weight:800;padding:10px 0;">−30초</button>
+        <button class="btn btn-block" id="lv-t-end" style="flex:2;background:var(--primary);color:#fff;border-radius:10px;font-size:13px;font-weight:800;padding:12px;">⏹ 라운드 종료</button>
+        <button class="btn btn-outline" id="lv-t-rp30" style="flex:1;font-size:12px;font-weight:800;padding:10px 0;">+30초</button>
+      </div>
       <button class="btn btn-ghost btn-sm btn-block" id="lv-t-reset" style="margin-top:4px;font-size:11px;">↺ 초기화</button>`;
 
   // ── BREAK
   } else if (phase === 'break') {
     const rem = Math.max(0, phaseEndAt - now);
     const pct = Math.max(0, Math.min(100, (rem / (breakSecs * 1000)) * 100));
-    const next = roundIdx + 1 < numRounds ? `RD ${roundIdx + 2} 자동 시작` : '마지막 라운드 완료';
+    const nextRdNum = roundIdx + 2;
+    const nextLabel = roundIdx + 1 < numRounds ? `RD ${nextRdNum} 자동 시작` : '마지막 라운드 완료';
     html = `
-      <div class="timer-phase-label is-break">⏸ 쉬는시간 · ${next}</div>
+      <div class="timer-phase-label is-break" style="font-size:13px;">⏸ 쉬는시간 · RD ${roundIdx + 1} 완료</div>
       <div class="timer-countdown-row">
         <div class="timer-big is-break">${_timerFmt(rem)}</div>
         <div class="timer-progress-wrap">
           <div class="timer-bar"><div class="timer-bar-fill is-break" style="width:${pct}%"></div></div>
-          <div class="timer-bar-sub">쉬는시간 종료 후 자동 시작</div>
+          <div class="timer-bar-sub" style="color:var(--warn);">${nextLabel}</div>
         </div>
       </div>
-      ${_roundDots(roundIdx, numRounds, 'break')}`;
+      ${_roundDots(roundIdx, numRounds, 'break')}
+      <button class="btn btn-outline btn-block" id="lv-t-skip-break" style="margin-top:10px;font-size:12px;font-weight:700;">▶ 쉬는시간 건너뛰기 (즉시 다음 라운드)</button>`;
 
   // ── DONE
   } else {
@@ -2791,6 +2814,19 @@ function updateTimerDisplay() {
   if (onMinus) onMinus.onclick = () => { _unlockAudio(); _liveTimer.roundSecs = Math.max(60, _liveTimer.roundSecs - 30); updateTimerDisplay(); };
   const onPlus = $('#lv-t-plus');
   if (onPlus) onPlus.onclick = () => { _unlockAudio(); _liveTimer.roundSecs = Math.min(1800, _liveTimer.roundSecs + 30); updateTimerDisplay(); };
+  // ±30s mid-round adjustment
+  const onRm30 = $('#lv-t-rm30');
+  if (onRm30) onRm30.onclick = () => {
+    _unlockAudio();
+    _liveTimer.phaseEndAt = Math.max(Date.now() + 5000, _liveTimer.phaseEndAt - 30000);
+    updateTimerDisplay();
+  };
+  const onRp30 = $('#lv-t-rp30');
+  if (onRp30) onRp30.onclick = () => {
+    _unlockAudio();
+    _liveTimer.phaseEndAt += 30000;
+    updateTimerDisplay();
+  };
   const onStart = $('#lv-t-start');
   if (onStart) onStart.onclick = () => {
     _unlockAudio();
@@ -2806,7 +2842,12 @@ function updateTimerDisplay() {
   const onEnd = $('#lv-t-end');
   if (onEnd) onEnd.onclick = () => {
     _unlockAudio();
-    if (_liveTimer.roundIdx >= _liveTimer.numRounds - 1) {
+    const ri = _liveTimer.roundIdx;
+    const nr = _liveTimer.numRounds;
+    const isLast = ri >= nr - 1;
+    // 수동 종료도 알람 발동
+    playAlarm(isLast ? `RD ${ri + 1} 종료 · 전체 완료!` : `RD ${ri + 1} 종료 · 쉬는시간`);
+    if (isLast) {
       _liveTimer.phase = 'done';
       if (_liveTimer.interval) { clearInterval(_liveTimer.interval); _liveTimer.interval = null; }
     } else {
@@ -2814,6 +2855,16 @@ function updateTimerDisplay() {
       _liveTimer.phaseEndAt = Date.now() + _liveTimer.breakSecs * 1000;
       _liveTimer.alerted = false;
     }
+    updateTimerDisplay();
+  };
+  // 쉬는시간 건너뛰기
+  const onSkipBreak = $('#lv-t-skip-break');
+  if (onSkipBreak) onSkipBreak.onclick = () => {
+    _unlockAudio();
+    _liveTimer.roundIdx = _liveTimer.roundIdx + 1;
+    _liveTimer.phase = 'playing';
+    _liveTimer.phaseEndAt = Date.now() + _liveTimer.roundSecs * 1000;
+    _liveTimer.alerted = false;
     updateTimerDisplay();
   };
   const onReset = $('#lv-t-reset');
@@ -3752,6 +3803,7 @@ function renderHistoryList(archived) {
         <div class="h-card-head">
           <span class="h-card-date">${svgRaw('calendar')}${fmtDate(m.date)}</span>
           <span class="h-card-actions">
+            ${state.isAdmin ? `<button class="icon-btn" data-share-id="${m.id}" data-share-title="${escapeHtml(m.title||m.date)}" title="공유">${svgRaw('link')}</button>` : ''}
             <button class="icon-btn" data-edit-id="${m.id}" title="수정">${svgRaw('edit')}</button>
             <button class="icon-btn" data-del-id="${m.id}" style="color:var(--danger);" title="삭제">${svgRaw('trash')}</button>
           </span>
@@ -3787,6 +3839,11 @@ function renderHistoryList(archived) {
   $$('[data-edit-id]').forEach(b => b.onclick = (e) => {
     e.stopPropagation();
     editArchived(b.dataset.editId);
+  });
+  $$('[data-share-id]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
+    const url = buildLiveUrl(b.dataset.shareId);
+    triggerShare(url, 'live', b.dataset.shareTitle);
   });
   $$('[data-del-id]').forEach(b => b.onclick = async (e) => {
     e.stopPropagation();
