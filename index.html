@@ -6,12 +6,15 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0f172a">
-<title>kkabi</title>
+<title>kkabi 우리 팀 풋살 매니저</title>
 <meta property="og:type" content="website">
-<meta property="og:title" content="kkabi">
+<meta property="og:title" content="kkabi 우리 팀 풋살 매니저">
 <meta property="og:description" content="우리의 경기는 더 재밌어야 한다">
 <meta property="og:image" content="">
 <meta property="og:url" content="">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="kkabi 우리 팀 풋살 매니저">
+<meta name="twitter:description" content="우리의 경기는 더 재밌어야 한다">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
@@ -3675,7 +3678,7 @@ function renderRecordsPage() {
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px;">
       ${[
         ['1순위', '승점 (P)', '이긴 경기 ×3, 무승부 ×1, 패배 ×0 누적'],
-        ['2순위', '1위팀 횟수 (🏆)', '경기에서 최다 승점을 획득한 팀에 속한 횟수'],
+        ['2순위', '1위 팀 횟수 (🏆)', '경기에서 최다 승점을 획득한 팀에 속한 횟수'],
         ['3순위', '승률 (%)', '전체 경기 중 이긴 비율'],
       ].map(([step, label, desc]) => `
         <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;background:var(--surface-2);border-radius:10px;border:1px solid var(--border);">
@@ -4523,22 +4526,19 @@ function _mkShareSvg(type) {
 
 const SHARE_CTX = {
   vote: {
-    ogTitle: t => `${t} — 경기 참석 여부를 알려주세요`,
-    ogDesc: () => '풋살 경기에 참석하시나요? 투표하고 참석 현황을 확인해보세요.',
-    title: t => `${t} 참석 투표`,
-    text:  t => `${t}\n경기에 참석하시나요? 투표 링크에서 알려주세요.`,
+    ogTitle: t => `⚽ ${t} — 경기 참석 여부를 알려주세요!`,
+    ogDesc: () => '지금 참석 투표를 해주세요. 현재 몇 명이 모였는지 바로 확인할 수 있어요.',
+    title: t => `⚽ ${t} — 경기 참석 여부를 알려주세요!`,
   },
   team: {
-    ogTitle: t => `${t} — 오늘 라인업 나왔어요`,
-    ogDesc: () => '팀 편성이 완료됐습니다. 오늘의 라인업을 확인해보세요.',
-    title: t => `${t} 오늘의 라인업`,
-    text:  t => `${t} 팀 편성이 나왔어요!\n오늘의 라인업을 확인해보세요.`,
+    ogTitle: t => `📋 ${t} — 오늘의 라인업 공개`,
+    ogDesc: () => '팀 편성이 완료됐어요. 내가 어느 팀인지, 상대 팀 전력은 어떤지 확인해보세요!',
+    title: t => `📋 ${t} — 오늘의 라인업 공개`,
   },
   live: {
-    ogTitle: t => `${t} — 경기 결과`,
-    ogDesc: () => '경기가 끝났습니다. 최종 결과를 확인해보세요.',
-    title: t => `${t} 경기 결과`,
-    text:  t => `${t} 경기가 끝났어요!\n최종 결과를 확인해보세요.`,
+    ogTitle: t => `🏆 ${t} — 최종 결과 확인`,
+    ogDesc: () => '경기가 끝났어요! 최종 순위와 결과를 확인해보세요.',
+    title: t => `🏆 ${t} — 최종 결과 확인`,
   },
 };
 
@@ -4565,7 +4565,7 @@ async function triggerShare(url, type, matchTitle) {
   updateOgTags(type, label);
   if (navigator.share) {
     try {
-      await navigator.share({ title: ctx.title(label), text: ctx.text(label), url });
+      await navigator.share({ title: ctx.title(label), url });
       return;
     } catch (e) {
       if (e.name === 'AbortError') return;
