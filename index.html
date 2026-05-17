@@ -6,14 +6,14 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0f172a">
-<title>kkabi 풋살 매니저</title>
+<title>kkabi</title>
 <meta property="og:type" content="website">
-<meta property="og:title" content="kkabi 풋살 매니저">
+<meta property="og:title" content="kkabi">
 <meta property="og:description" content="우리의 경기는 더 재밌어야 한다">
 <meta property="og:image" content="">
 <meta property="og:url" content="">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="kkabi 풋살 매니저">
+<meta name="twitter:title" content="kkabi">
 <meta name="twitter:description" content="우리의 경기는 더 재밌어야 한다">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
@@ -269,6 +269,9 @@
   }
   input[type="date"], input[type="datetime-local"], input[type="time"] {
     width: 100%; max-width: 100%; box-sizing: border-box; min-width: 0;
+    font-size: 13px;
+    -webkit-appearance: none;
+    appearance: none;
   }
   .input:focus, .select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
@@ -1403,7 +1406,7 @@
   .modal-card * { box-sizing: border-box; }
   .modal-card .input, .modal-card .select { width: 100%; min-width: 0; }
   .modal-card h3 { margin: 0 0 12px; font-size: 16px; font-weight: 800; color: var(--text); }
-  .field { margin-bottom: 12px; }
+  .field { margin-bottom: 12px; overflow: hidden; }
   /* 누락 기록 모달 플레이어 피커 */
   .mm-player-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; width: 100%; min-width: 0; }
   .mm-pick-btn {
@@ -1790,7 +1793,7 @@ function attachConfigListener() {
   const cb = (snap) => {
     const c = snap.val() || {};
     state.teamName = c.teamName || DEFAULT_TEAM_NAME;
-    document.title = `${state.teamName} 풋살 매니저`;
+    document.title = state.teamName;
     rerenderCurrent();
   };
   ref.on('value', cb);
@@ -4573,7 +4576,7 @@ function updateOgTags(type, matchTitle) {
   if (!ctx) return;
   const label = matchTitle || 'kkabi 풋살';
   const teamName = (state && state.teamName) ? state.teamName : 'kkabi';
-  const appTitle = `${teamName} 풋살 매니저`;
+  const appTitle = teamName;
   const setMeta = (prop, val) => {
     let el = document.querySelector(`meta[property="${prop}"]`);
     if (!el) { el = document.createElement('meta'); el.setAttribute('property', prop); document.head.appendChild(el); }
