@@ -6,14 +6,14 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0f172a">
-<title>kkabi 우리 팀 풋살 매니저</title>
+<title>kkabi 풋살 매니저</title>
 <meta property="og:type" content="website">
-<meta property="og:title" content="kkabi 우리 팀 풋살 매니저">
+<meta property="og:title" content="kkabi 풋살 매니저">
 <meta property="og:description" content="우리의 경기는 더 재밌어야 한다">
 <meta property="og:image" content="">
 <meta property="og:url" content="">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="kkabi 우리 팀 풋살 매니저">
+<meta name="twitter:title" content="kkabi 풋살 매니저">
 <meta name="twitter:description" content="우리의 경기는 더 재밌어야 한다">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
@@ -978,7 +978,7 @@
   .lb-ranking-wrap { display: flex; flex-direction: column; gap: 2px; }
   .lb-grid-row {
     display: grid;
-    grid-template-columns: 28px minmax(0,1fr) 52px 40px 28px 42px;
+    grid-template-columns: 28px minmax(0,1fr) 52px 40px 28px 28px 42px;
     gap: 6px;
     align-items: center;
     padding: 10px 4px;
@@ -2618,6 +2618,18 @@ let _liveTimer = {
   alerted: false,
 };
 
+function speak(text) {
+  try {
+    if (!window.speechSynthesis) return;
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ko-KR';
+    u.rate = 0.9;
+    u.volume = 1.0;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
+  } catch(e) {}
+}
+
 function playAlarm(notifBody) {
   // 1) 진동 (Android Chrome에서 동작)
   try {
@@ -2693,7 +2705,7 @@ function resetLiveTimer() {
   if (_liveTimer.interval) clearInterval(_liveTimer.interval);
   const rs = _liveTimer.roundSecs;
   const nr = _liveTimer.numRounds;
-  _liveTimer = { roundSecs: rs, breakSecs: 60, phase: 'idle', roundIdx: 0, numRounds: nr, phaseEndAt: null, interval: null, alerted: false };
+  _liveTimer = { roundSecs: rs, breakSecs: 60, phase: 'idle', roundIdx: 0, numRounds: nr, phaseEndAt: null, interval: null, alerted: false, warned2m: false };
   updateTimerDisplay();
 }
 
@@ -2731,6 +2743,7 @@ function updateTimerDisplay() {
       _liveTimer.phase = 'playing';
       _liveTimer.phaseEndAt = now + roundSecs * 1000;
       _liveTimer.alerted = false;
+      _liveTimer.warned2m = false;
       updateTimerDisplay(); return;
     } else {
       _liveTimer.phase = 'done';
@@ -2762,6 +2775,11 @@ function updateTimerDisplay() {
   // ── PLAYING
   } else if (phase === 'playing') {
     const rem = Math.max(0, phaseEndAt - now);
+    // 2분 남은 시점 음성 알림
+    if (!_liveTimer.warned2m && rem <= 120000 && rem > 115000) {
+      _liveTimer.warned2m = true;
+      speak('2분 남았습니다');
+    }
     const pct = Math.max(0, Math.min(100, (rem / (roundSecs * 1000)) * 100));
     const danger = rem < 60000;
     html = `
@@ -2839,6 +2857,7 @@ function updateTimerDisplay() {
     _liveTimer.roundIdx = 0;
     _liveTimer.phaseEndAt = Date.now() + _liveTimer.roundSecs * 1000;
     _liveTimer.alerted = false;
+    _liveTimer.warned2m = false;
     if (!_liveTimer.interval) _liveTimer.interval = setInterval(updateTimerDisplay, 400);
     updateTimerDisplay();
   };
@@ -2868,6 +2887,7 @@ function updateTimerDisplay() {
     _liveTimer.phase = 'playing';
     _liveTimer.phaseEndAt = Date.now() + _liveTimer.roundSecs * 1000;
     _liveTimer.alerted = false;
+    _liveTimer.warned2m = false;
     updateTimerDisplay();
   };
   const onReset = $('#lv-t-reset');
@@ -3549,13 +3569,15 @@ function renderPublicLivePage() {
     </div>
     <div class="card">
       <div class="section-title">라운드 기록</div>
-      <div id="public-rl">${(m.rounds || []).map(r => roundCardHtml(r)).join('')}</div>
+      <div id="public-rl" ${m.status === 'finished' ? 'style="pointer-events:none;"' : ''}>${(m.rounds || []).map(r => roundCardHtml(r)).join('')}</div>
     </div>
     ${m.status === 'finished' ? '' : `<div style="margin-top:14px;"><button class="btn btn-accent btn-block" id="pl-finish">${svgRaw('flag')} 경기 종료 (관리자)</button></div>`}
   `;
-  $$('.round-card .s-btn').forEach(b => {
-    b.onclick = () => recordRound(state.currentMatchId, parseInt(b.dataset.rid, 10), b.dataset.win);
-  });
+  if (m.status !== 'finished') {
+    $$('.round-card .s-btn').forEach(b => {
+      b.onclick = () => recordRound(state.currentMatchId, parseInt(b.dataset.rid, 10), b.dataset.win);
+    });
+  }
   const finishBtn = $('#pl-finish');
   if (finishBtn) finishBtn.onclick = async () => {
     if (!await ensureAdmin()) return;
@@ -3713,8 +3735,9 @@ function renderLeaderboard(archived) {
       (team.members || []).forEach(p => {
         const nameKey = (p.name || '').trim().toLowerCase();
         if (!nameKey || isGuestPlayer(p)) return;
-        if (!stats[nameKey]) stats[nameKey] = { name: (p.name || '').trim(), play: 0, top1: 0, w: 0, d: 0, l: 0, pts: 0 };
+        if (!stats[nameKey]) stats[nameKey] = { name: (p.name || '').trim(), play: 0, top1: 0, w: 0, d: 0, l: 0, pts: 0, days: new Set() };
         stats[nameKey].play++;
+        if (m.date) stats[nameKey].days.add(m.date);
         stats[nameKey].w += teamStat.w;
         stats[nameKey].d += teamStat.d;
         stats[nameKey].l += teamStat.l;
@@ -3723,6 +3746,7 @@ function renderLeaderboard(archived) {
       });
     });
   });
+  Object.values(stats).forEach(s => { s.days = s.days ? s.days.size : 0; });
   const wr = s => s.w / Math.max(1, s.w + s.d + s.l);
   const arr = Object.values(stats).sort((a, b) => {
     if (b.pts !== a.pts) return b.pts - a.pts;
@@ -3752,6 +3776,7 @@ function renderLeaderboard(archived) {
         <span style="justify-content:flex-end;">전적</span>
         <span style="justify-content:flex-end;">승률</span>
         <span style="justify-content:center;font-size:10px;">🏆</span>
+        <span style="justify-content:center;font-size:10px;">📅</span>
         <span style="justify-content:flex-end;">승점</span>
       </div>
       ${arr.map((s, i) => {
@@ -3769,6 +3794,7 @@ function renderLeaderboard(archived) {
           <span class="lb-record-cell">${s.w}승 ${s.d}무 ${s.l}패</span>
           <span class="lb-record-cell">${wrPct}%</span>
           <span style="text-align:center;font-size:12px;font-weight:900;color:${s.top1 ? 'var(--accent-2)' : 'var(--text-3)'};">${s.top1 || '—'}</span>
+          <span style="text-align:center;font-size:12px;font-weight:900;color:var(--text-2);">${s.days || '—'}</span>
           <div class="lb-pts-cell">
             <span class="lb-pts-main">${s.pts}<span class="pts-unit">P</span></span>
           </div>
@@ -4546,17 +4572,19 @@ function updateOgTags(type, matchTitle) {
   const ctx = SHARE_CTX[type];
   if (!ctx) return;
   const label = matchTitle || 'kkabi 풋살';
+  const teamName = (state && state.teamName) ? state.teamName : 'kkabi';
+  const appTitle = `${teamName} 풋살 매니저`;
   const setMeta = (prop, val) => {
     let el = document.querySelector(`meta[property="${prop}"]`);
     if (!el) { el = document.createElement('meta'); el.setAttribute('property', prop); document.head.appendChild(el); }
     el.setAttribute('content', val);
   };
-  setMeta('og:title', ctx.ogTitle(label));
+  setMeta('og:title', appTitle);
   setMeta('og:description', ctx.ogDesc());
   setMeta('og:url', location.href);
   const svgStr = _mkShareSvg(type);
   if (svgStr) setMeta('og:image', 'data:image/svg+xml,' + encodeURIComponent(svgStr));
-  document.title = ctx.ogTitle(label);
+  document.title = appTitle;
 }
 
 async function triggerShare(url, type, matchTitle) {
