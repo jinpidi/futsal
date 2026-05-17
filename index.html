@@ -255,6 +255,9 @@
 
   .input, .select {
     width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
     background: var(--surface);
     border: 1px solid var(--border-2);
     border-radius: 10px;
@@ -263,6 +266,9 @@
     color: var(--text);
     font-weight: 600;
     font-family: inherit;
+  }
+  input[type="date"], input[type="datetime-local"], input[type="time"] {
+    width: 100%; max-width: 100%; box-sizing: border-box; min-width: 0;
   }
   .input:focus, .select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
@@ -1784,6 +1790,7 @@ function attachConfigListener() {
   const cb = (snap) => {
     const c = snap.val() || {};
     state.teamName = c.teamName || DEFAULT_TEAM_NAME;
+    document.title = `${state.teamName} 풋살 매니저`;
     rerenderCurrent();
   };
   ref.on('value', cb);
@@ -2243,26 +2250,19 @@ function showFinishedMatchDetail(m) {
   };
 }
 
+function _shareBase(file) {
+  // share-*.html이 같은 폴더에 있다고 가정
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  return base + file;
+}
 function buildVoteUrl(matchId) {
-  const u = new URL(location.href);
-  u.searchParams.set('view', 'vote');
-  u.searchParams.set('m', matchId);
-  u.hash = '';
-  return u.toString();
+  return _shareBase('share-vote.html') + '?m=' + encodeURIComponent(matchId);
 }
 function buildLiveUrl(matchId) {
-  const u = new URL(location.href);
-  u.searchParams.set('view', 'live');
-  u.searchParams.set('m', matchId);
-  u.hash = '';
-  return u.toString();
+  return _shareBase('share-live.html') + '?m=' + encodeURIComponent(matchId);
 }
 function buildTeamShareUrl(matchId) {
-  const u = new URL(location.href);
-  u.searchParams.set('view', 'team');
-  u.searchParams.set('m', matchId);
-  u.hash = '';
-  return u.toString();
+  return _shareBase('share-team.html') + '?m=' + encodeURIComponent(matchId);
 }
 
 /* ===========================================================

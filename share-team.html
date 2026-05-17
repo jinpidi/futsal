@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>오늘의 라인업 공개</title>
+
+  <!-- OG Tags — 카카오/SNS 크롤러용 -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="📋 오늘의 라인업 공개">
+  <meta property="og:description" content="팀 편성이 완료됐어요. 내가 어느 팀인지, 상대 팀 전력은 어떤지 확인해보세요!">
+  <meta property="og:image" content="">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="📋 오늘의 라인업 공개">
+  <meta name="twitter:description" content="팀 편성이 완료됐어요. 내가 어느 팀인지, 상대 팀 전력은 어떤지 확인해보세요!">
+
+  <script>
+    // 브라우저는 즉시 메인 앱으로 리다이렉트
+    (function () {
+      const params = new URLSearchParams(location.search);
+      const m = params.get('m');
+      const base = location.origin + location.pathname.replace('share-team.html', 'index.html');
+      const dest = base + (m ? '?view=team&m=' + encodeURIComponent(m) : '?view=team');
+      location.replace(dest);
+    })();
+  </script>
+</head>
+<body style="background:#0f172a;color:#fff;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;">
+  <div style="text-align:center;padding:20px;">
+    <div style="font-size:32px;margin-bottom:12px;">📋</div>
+    <div style="font-size:16px;font-weight:700;">이동 중...</div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>경기 참석 여부를 알려주세요!</title>
+
+  <!-- OG Tags — 카카오/SNS 크롤러용 -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="⚽ 경기 참석 여부를 알려주세요!">
+  <meta property="og:description" content="지금 참석 투표를 해주세요. 현재 몇 명이 모였는지 바로 확인할 수 있어요.">
+  <meta property="og:image" content="">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="⚽ 경기 참석 여부를 알려주세요!">
+  <meta name="twitter:description" content="지금 참석 투표를 해주세요. 현재 몇 명이 모였는지 바로 확인할 수 있어요.">
+
+  <script>
+    // 브라우저는 즉시 메인 앱으로 리다이렉트
+    (function () {
+      const params = new URLSearchParams(location.search);
+      const m = params.get('m');
+      const base = location.origin + location.pathname.replace('share-vote.html', 'index.html');
+      const dest = base + (m ? '?view=vote&m=' + encodeURIComponent(m) : '?view=vote');
+      location.replace(dest);
+    })();
+  </script>
+</head>
+<body style="background:#0a2d1f;color:#fff;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;">
+  <div style="text-align:center;padding:20px;">
+    <div style="font-size:32px;margin-bottom:12px;">⚽</div>
+    <div style="font-size:16px;font-weight:700;">이동 중...</div>
+  </div>
+</body>
+</html>
