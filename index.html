@@ -2117,7 +2117,10 @@ function openMatchDetail(id) {
       </div>
     </div>
 
-    <div class="section-title">참석 확정 (${confirmed.length}/${max})</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <div class="section-title" style="margin:0;">참석 확정 (${confirmed.length}/${max})</div>
+      ${state.isAdmin ? `<button class="btn btn-outline btn-sm" id="md-manual-attend" style="font-size:11px;padding:4px 10px;">✏️ 수기 추가</button>` : ''}
+    </div>
     <div class="roster-list">${
       confirmed.length
         ? confirmed.map(([pid, v], i) => {
@@ -2163,7 +2166,7 @@ function openMatchDetail(id) {
         <button class="btn btn-accent btn-block" id="md-go-builder">팀 편성 보기 / 수정</button>
         <button class="btn btn-outline btn-block" id="md-go-live">경기 라이브 이어하기</button>
       ` : `
-        <button class="btn btn-accent btn-block" id="md-go-builder" ${confirmed.length < 2 ? 'disabled' : ''}>팀 편성하기 (관리자)</button>
+        <button class="btn btn-accent btn-block" id="md-go-builder">팀 편성하기 (관리자)</button>
       `}
       <button class="btn btn-outline btn-block" data-modal-close>닫기</button>
       <button class="btn btn-ghost btn-block" id="md-delete" style="color:var(--danger);font-size:11px;">경기 삭제</button>
@@ -2179,6 +2182,11 @@ function openMatchDetail(id) {
   };
   const goLiveBtn = $('#md-go-live');
   if (goLiveBtn) goLiveBtn.onclick = () => { closeModal(); state.currentMatchId = id; navigate('live'); };
+  const manualAttendBtn = $('#md-manual-attend');
+  if (manualAttendBtn) manualAttendBtn.onclick = async () => {
+    if (!await ensureAdmin()) return;
+    openManualAttendModal(id);
+  };
   $('#md-delete').onclick = async () => {
     if (!await ensureAdmin()) return;
     if (!confirm('정말 삭제할까요?')) return;
@@ -2186,6 +2194,84 @@ function openMatchDetail(id) {
     closeModal();
     toast('삭제되었습니다', 'ok');
   };
+}
+
+function openManualAttendModal(matchId) {
+  const m = state.matches[matchId];
+  if (!m) return;
+  const votes = m.votes || {};
+  // 현재 참석 확정된 playerId 목록
+  const attendIds = new Set(
+    Object.entries(votes).filter(([_, v]) => v.status === 'attend').map(([pid]) => pid)
+  );
+  const allPlayers = Object.values(state.players || {}).sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '', 'ko-KR')
+  );
+
+  function buildHtml() {
+    return `
+      <h3 style="margin-bottom:4px;">수기 참석자 선택</h3>
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:14px;font-weight:600;">탭으로 참석 여부 전환 · 저장 후 팀 편성 가능</div>
+      <div class="mm-player-grid" id="ma-grid">
+        ${allPlayers.map(p => {
+          const on = attendIds.has(p.id);
+          return `<button class="mm-pick-btn ${on ? 'mm-ta' : ''}" data-pid="${p.id}">
+            <span class="mpb-badge">${on ? '참석' : '　'}</span>
+            <span>${escapeHtml(p.name)}</span>
+          </button>`;
+        }).join('')}
+      </div>
+      <div style="font-size:11px;color:var(--text-2);text-align:center;margin-top:8px;" id="ma-count">
+        ${attendIds.size}명 선택됨
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px;">
+        <button class="btn btn-outline btn-block" data-modal-close>취소</button>
+        <button class="btn btn-accent btn-block" id="ma-save">저장</button>
+      </div>
+    `;
+  }
+
+  function attachEvents() {
+    document.querySelectorAll('#ma-grid .mm-pick-btn').forEach(btn => {
+      btn.onclick = () => {
+        const pid = btn.dataset.pid;
+        if (attendIds.has(pid)) { attendIds.delete(pid); }
+        else { attendIds.add(pid); }
+        // 버튼 상태 즉시 업데이트
+        const on = attendIds.has(pid);
+        btn.className = `mm-pick-btn ${on ? 'mm-ta' : ''}`;
+        btn.querySelector('.mpb-badge').textContent = on ? '참석' : '　';
+        $('#ma-count').textContent = `${attendIds.size}명 선택됨`;
+      };
+    });
+
+    $('#ma-save').onclick = async () => {
+      if (!await ensureAdmin()) return;
+      // 기존 vote 유지 + 수기 선택 반영
+      const updates = {};
+      // 선택된 사람은 attend로
+      attendIds.forEach(pid => {
+        const existing = votes[pid];
+        if (!existing || existing.status !== 'attend') {
+          updates[pid] = { status: 'attend', name: (state.players[pid] || {}).name || pid, ts: Date.now(), manual: true };
+        }
+      });
+      // 기존에 있었지만 선택 해제된 사람은 삭제
+      Object.keys(votes).forEach(pid => {
+        if (votes[pid].status === 'attend' && !attendIds.has(pid)) {
+          updates[pid] = null; // Firebase에서 삭제
+        }
+      });
+      await db.ref(`matches/${matchId}/votes`).update(updates);
+      closeModal();
+      toast(`${attendIds.size}명 참석 등록 완료`, 'ok');
+      // 매치 디테일 다시 열기
+      setTimeout(() => openMatchDetail(matchId), 300);
+    };
+  }
+
+  showModal(buildHtml());
+  attachEvents();
 }
 
 function showFinishedMatchDetail(m) {
