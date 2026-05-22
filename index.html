@@ -2264,58 +2264,80 @@ function openManualAttendModal(matchId) {
 }
 
 function openGuestPickerModal(matchId) {
-  const allPlayers = Object.values(state.players || {}).sort((a, b) =>
-    (a.name || '').localeCompare(b.name || '', 'ko-KR'));
-
-  // Count existing guests per host for numbering
+  const allPlayers = Object.values(state.players || {})
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko-KR'));
   const votes = (state.matches[matchId] || {}).votes || {};
-  const guestCountByHost = {};
-  Object.entries(votes).forEach(([pid, v]) => {
-    if (pid.startsWith('guest_') && v.guestOf) {
-      guestCountByHost[v.guestOf] = (guestCountByHost[v.guestOf] || 0) + 1;
-    }
-  });
+
+  // 기존 게스트 이름 집계 → 넘버링용
+  const existingGuestNames = Object.entries(votes)
+    .filter(([pid, v]) => pid.startsWith('guest_'))
+    .map(([_, v]) => v.name || '');
+
+  function guestNameForHost(hostId, hostName) {
+    const pattern = hostName + ' 게스트';
+    const count = existingGuestNames.filter(n => n === pattern || (n.startsWith(pattern) && /\d$/.test(n))).length;
+    return count === 0 ? `${hostName} 게스트` : `${hostName} 게스트${count + 1}`;
+  }
 
   showModal(`
     <h3 style="margin-bottom:4px;">게스트 참석</h3>
-    <div style="font-size:11px;color:var(--text-2);margin-bottom:14px;">이 게스트를 부른 팀원을 선택해주세요</div>
-    <div class="mm-player-grid" style="margin-bottom:12px;">
+    <div style="font-size:11.5px;color:var(--text-2);margin-bottom:14px;font-weight:600;">이 게스트를 부른 팀원을 선택해주세요</div>
+    <div class="mm-player-grid" id="gp-grid">
       ${allPlayers.map(p => `
-        <button class="mm-pick-btn" data-host="${p.id}" data-host-name="${escapeHtml(p.name)}">
-          <span class="mpb-badge">　</span>
+        <button class="mm-pick-btn" data-hid="${p.id}" data-hname="${escapeHtml(p.name)}">
+          <span class="mpb-badge" style="background:transparent;color:transparent;">ㅤ</span>
           <span>${escapeHtml(p.name)}</span>
         </button>
       `).join('')}
     </div>
-    <button class="btn btn-outline btn-block" id="gp-external" style="font-size:12px;margin-bottom:8px;">외부 게스트 (팀원 없음)</button>
-    <button class="btn btn-ghost btn-block btn-sm" data-modal-close>취소</button>
+    <div style="height:1px;background:var(--border);margin:12px 0;"></div>
+    <button class="btn btn-outline btn-block" id="gp-external" style="font-size:12.5px;font-weight:700;">
+      👤 외부 게스트
+    </button>
+    <div style="font-size:10px;color:var(--text-3);text-align:center;margin-top:5px;margin-bottom:2px;">우리 팀원이 아닌 외부인</div>
+    <button class="btn btn-ghost btn-sm btn-block" data-modal-close style="margin-top:10px;">취소</button>
   `);
 
-  const selectHost = (hostId, hostName) => {
-    const existingCount = guestCountByHost[hostId] || 0;
-    const num = existingCount + 1;
-    const guestId = 'guest_' + uid();
-    const displayName = num === 1 ? `${hostName} 게스트` : `${hostName} 게스트${num}`;
-    state.voterId = guestId;
-    state.voterPinVerified = true;
-    state._guestName = displayName;
-    state._guestOf = hostId;
-    state._guestOfName = hostName;
-    sessionStorage.setItem(pinSessionKey(matchId, guestId), '1');
-    localStorage.setItem('voterId_' + matchId, guestId);
-    closeModal();
-    renderVotePage();
-  };
-
-  document.querySelectorAll('[data-host]').forEach(btn => {
-    btn.onclick = () => selectHost(btn.dataset.host, btn.dataset.hostName);
+  document.querySelectorAll('#gp-grid .mm-pick-btn').forEach(btn => {
+    btn.onclick = () => {
+      const hostId = btn.dataset.hid;
+      const hostName = btn.dataset.hname;
+      const displayName = guestNameForHost(hostId, hostName);
+      // 선택 피드백
+      document.querySelectorAll('#gp-grid .mm-pick-btn').forEach(b => {
+        b.classList.remove('mm-ta');
+        const badge = b.querySelector('.mpb-badge');
+        badge.style.background = 'transparent';
+        badge.style.color = 'transparent';
+        badge.textContent = 'ㅤ';
+      });
+      btn.classList.add('mm-ta');
+      const badge = btn.querySelector('.mpb-badge');
+      badge.style.background = '';
+      badge.style.color = '';
+      badge.textContent = '선택됨';
+      const guestId = 'guest_' + uid();
+      setTimeout(() => {
+        state.voterId = guestId;
+        state.voterPinVerified = true;
+        state._guestName = displayName;
+        state._guestOf = hostId;
+        state._guestOfName = hostName;
+        sessionStorage.setItem(pinSessionKey(matchId, guestId), '1');
+        localStorage.setItem('voterId_' + matchId, guestId);
+        closeModal();
+        renderVotePage();
+      }, 200);
+    };
   });
 
   $('#gp-external').onclick = () => {
+    const extCount = existingGuestNames.filter(n => n.startsWith('외부 게스트')).length;
+    const displayName = extCount === 0 ? '외부 게스트' : `외부 게스트${extCount + 1}`;
     const guestId = 'guest_' + uid();
     state.voterId = guestId;
     state.voterPinVerified = true;
-    state._guestName = '외부 게스트';
+    state._guestName = displayName;
     state._guestOf = null;
     state._guestOfName = null;
     sessionStorage.setItem(pinSessionKey(matchId, guestId), '1');
@@ -3197,16 +3219,16 @@ function renderTeamBuilderPage() {
     };
     $('#tb-add-guest').onclick = () => {
       _tbActive = readTeamsFromDOM(_tbActive);
-      const name = prompt('게스트 이름?');
-      if (!name) return;
-      const g = guestPlayerWithId('guest_' + uid(), name);
-      let smallest = 0;
-      _tbActive.forEach((t, i) => {
-        if ((t.members || []).length < (_tbActive[smallest].members || []).length) smallest = i;
+      openGuestHostPickerModal((guestName) => {
+        const g = guestPlayerWithId('guest_' + uid(), guestName);
+        let smallest = 0;
+        _tbActive.forEach((t, i) => {
+          if ((t.members || []).length < (_tbActive[smallest].members || []).length) smallest = i;
+        });
+        if (!_tbActive[smallest].members) _tbActive[smallest].members = [];
+        _tbActive[smallest].members.push(g);
+        paint();
       });
-      if (!_tbActive[smallest].members) _tbActive[smallest].members = [];
-      _tbActive[smallest].members.push(g);
-      paint();
     };
     $('#tb-save-plan').onclick = async () => {
       _tbActive = readTeamsFromDOM(_tbActive);
@@ -3366,6 +3388,69 @@ function balanceDraft(players, teamN) {
 function isGuestPlayer(p) {
   return !p || !p.id || String(p.id).startsWith('guest_') || String(p.id).startsWith('m_') || String(p.id).startsWith('manual_');
 }
+function openGuestHostPickerModal(onSelect) {
+  const allPlayers = Object.values(state.players || {})
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko-KR'));
+
+  // 현재 팀빌더 멤버 중 이미 추가된 게스트 이름 집계 → 넘버링용
+  const existingNames = [];
+  (_tbActive || []).forEach(t => (t.members || []).forEach(p => {
+    if (isGuestPlayer(p)) existingNames.push(p.name || '');
+  }));
+
+  function guestNameForHost(hostName) {
+    // 이 호스트의 게스트가 몇 명인지 카운트
+    const pattern = hostName + ' 게스트';
+    const count = existingNames.filter(n => n === pattern || n.startsWith(pattern)).length;
+    return count === 0 ? `${hostName} 게스트` : `${hostName} 게스트${count + 1}`;
+  }
+
+  showModal(`
+    <h3 style="margin-bottom:4px;">게스트 추가</h3>
+    <div style="font-size:11.5px;color:var(--text-2);margin-bottom:14px;font-weight:600;">이 게스트를 부른 팀원을 선택해주세요</div>
+    <div class="mm-player-grid" id="ghp-grid">
+      ${allPlayers.map(p => `
+        <button class="mm-pick-btn" data-hid="${p.id}" data-hname="${escapeHtml(p.name)}">
+          <span class="mpb-badge" style="background:transparent;color:transparent;">ㅤ</span>
+          <span>${escapeHtml(p.name)}</span>
+        </button>
+      `).join('')}
+    </div>
+    <div style="height:1px;background:var(--border);margin:12px 0;"></div>
+    <button class="btn btn-outline btn-block" id="ghp-ext" style="font-size:12.5px;font-weight:700;">
+      👤 외부 게스트
+    </button>
+    <div style="font-size:10px;color:var(--text-3);text-align:center;margin-top:6px;">우리 팀원이 아닌 외부인</div>
+    <button class="btn btn-ghost btn-sm btn-block" data-modal-close style="margin-top:10px;">취소</button>
+  `);
+
+  document.querySelectorAll('#ghp-grid .mm-pick-btn').forEach(btn => {
+    btn.onclick = () => {
+      const hname = btn.dataset.hname;
+      const gname = guestNameForHost(hname);
+      // 선택 피드백
+      document.querySelectorAll('#ghp-grid .mm-pick-btn').forEach(b => {
+        b.classList.remove('mm-ta');
+        b.querySelector('.mpb-badge').style.background = 'transparent';
+        b.querySelector('.mpb-badge').style.color = 'transparent';
+        b.querySelector('.mpb-badge').textContent = 'ㅤ';
+      });
+      btn.classList.add('mm-ta');
+      btn.querySelector('.mpb-badge').style.background = '';
+      btn.querySelector('.mpb-badge').style.color = '';
+      btn.querySelector('.mpb-badge').textContent = '선택됨';
+      setTimeout(() => { closeModal(); onSelect(gname); }, 200);
+    };
+  });
+
+  $('#ghp-ext').onclick = () => {
+    const extCount = existingNames.filter(n => n.startsWith('외부 게스트')).length;
+    const gname = extCount === 0 ? '외부 게스트' : `외부 게스트${extCount + 1}`;
+    closeModal();
+    onSelect(gname);
+  };
+}
+
 function guestPlayerWithId(id, name) {
   const avg = teamAvgStats();
   const score = calcScore(avg);
