@@ -3100,11 +3100,19 @@ function renderTeamBuilderPage() {
   }
   _tbActive = teams;
 
+  const allMembers = teams.flatMap(t => t.members || []);
+  const memberCount = allMembers.filter(p => !isGuestPlayer(p)).length;
+  const guestCount  = allMembers.filter(p => isGuestPlayer(p)).length;
+  const totalCount  = allMembers.length;
+  const countLabel  = guestCount > 0
+    ? `총 ${totalCount}명 (팀원 ${memberCount}명 + 게스트 ${guestCount}명)`
+    : `참석 ${totalCount}명`;
+
   root.innerHTML = `
     <div class="page-header">
       <div class="page-header-left">
         <h2 class="page-title">${escapeHtml(m.title)} · 팀 편성</h2>
-        <div class="page-subtitle">${fmtDate(m.date)} · 참석 ${confirmed.length}명</div>
+        <div class="page-subtitle">${fmtDate(m.date)} · ${countLabel}</div>
       </div>
       <div class="page-header-right">
         <button class="icon-btn" id="tb-back" title="뒤로">${svgRaw('back')}</button>
