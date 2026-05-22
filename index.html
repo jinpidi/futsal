@@ -662,6 +662,12 @@
     border-radius: 20px;
     padding: 3px 9px;
   }
+  .md-name-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .md-chip { font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
+  .md-chip-attend { background: var(--accent-soft); color: var(--accent-2); }
+  .md-chip-wait { background: rgba(245,158,11,0.12); color: #92400e; }
+  .md-chip-maybe { background: rgba(245,158,11,0.1); color: #92400e; }
+  .md-chip-decline { background: var(--surface-3); color: var(--text-3); }
 
   /* ============ TEAM BUILDER ============ */
   .team-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
@@ -2109,57 +2115,40 @@ function openMatchDetail(id) {
     <div style="font-size:12px;color:var(--text-2);margin:-6px 0 12px;font-weight:600;">
       ${fmtDate(m.date)} · 마감 ${fmtDateTime(m.deadline)}
     </div>
-    <div class="card" style="padding:12px;background:var(--surface-2);margin-bottom:10px;">
-      <div class="section-title">공유 링크</div>
-      <div style="display:flex;gap:6px;align-items:center;">
-        <input class="input" readonly value="${escapeHtml(shareUrl)}" id="md-share-url" style="font-size:11px;">
-        <button class="icon-btn" id="md-copy-share" title="복사">${svgRaw('copy')}</button>
-      </div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <button class="btn btn-outline btn-block" id="md-copy-share" style="font-size:12px;gap:6px;">${svgRaw('link')} 투표 링크 공유</button>
     </div>
 
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-      <div class="section-title" style="margin:0;">참석 확정 (${confirmed.length}/${max})</div>
-      ${state.isAdmin ? `<button class="btn btn-outline btn-sm" id="md-manual-attend" style="font-size:11px;padding:4px 10px;">✏️ 수기 추가</button>` : ''}
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div style="font-size:13px;font-weight:800;color:var(--text);">참석 <span style="color:var(--accent-2);">${confirmed.length}</span><span style="color:var(--text-3);font-weight:600;font-size:11px;">/${max}</span>${waitlist.length ? ` <span style="font-size:10px;font-weight:800;color:var(--warn);background:var(--warn-soft);padding:1px 7px;border-radius:20px;margin-left:4px;">대기 ${waitlist.length}</span>` : ''}</div>
+      ${state.isAdmin ? `<button class="btn btn-outline btn-sm" id="md-manual-attend" style="font-size:11px;padding:4px 10px;">✏️ 수기</button>` : ''}
     </div>
-    <div class="roster-list">${
-      confirmed.length
-        ? confirmed.map(([pid, v], i) => {
-            const p = state.players[pid] || { name: v.name || '게스트' };
-            return `<div class="roster-item">
-              <span class="roster-num">${i+1}번</span>
-              <span class="roster-icon">${svgRaw('check')}</span>
-              <span class="roster-name">${escapeHtml(p.name)}</span>
-              <span class="roster-time">${fmtVoteTimestamp(v.ts)}</span>
-            </div>`;
-          }).join('')
-        : '<div class="empty" style="padding:14px;font-size:12px;">아직 투표 없음</div>'
-    }</div>
-    ${waitlist.length ? `
-      <div class="section-title" style="margin-top:14px;">대기 (${waitlist.length})</div>
-      <div class="roster-list">${waitlist.map(([pid, v], i) => {
-        const p = state.players[pid] || { name: v.name || '게스트' };
-        return `<div class="roster-item waitlist">
-          <span class="roster-num">대기${i+1}</span>
-          <span class="roster-icon">${svgRaw('hourglass')}</span>
-          <span class="roster-name">${escapeHtml(p.name)}</span>
-          <span class="roster-time">${fmtVoteTimestamp(v.ts)}</span>
-        </div>`;
-      }).join('')}</div>
-    ` : ''}
-    ${maybes.length ? `
-      <div class="section-title" style="margin-top:14px;">미정 (${maybes.length})</div>
-      <div class="roster-list">${maybes.map(([pid, v]) => {
-        const p = state.players[pid] || { name: v.name || '게스트' };
-        return `<div class="roster-item maybe"><span class="roster-icon">${svgRaw('dash')}</span><span class="roster-name">${escapeHtml(p.name)}</span></div>`;
-      }).join('')}</div>
-    ` : ''}
-    ${declines.length ? `
-      <div class="section-title" style="margin-top:14px;">불참 (${declines.length})</div>
-      <div class="roster-list">${declines.map(([pid, v]) => {
-        const p = state.players[pid] || { name: v.name || '게스트' };
-        return `<div class="roster-item decline"><span class="roster-icon">${svgRaw('x')}</span><span class="roster-name">${escapeHtml(p.name)}</span></div>`;
-      }).join('')}</div>
-    ` : ''}
+    ${confirmed.length ? `<div class="md-name-chips">${confirmed.map(([pid, v]) => {
+      const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트') };
+      return `<span class="md-chip md-chip-attend">${escapeHtml(p.name)}</span>`;
+    }).join('')}</div>` : `<div style="font-size:11.5px;color:var(--text-3);padding:6px 0 10px;">아직 참석자 없음</div>`}
+    ${waitlist.length ? `<div class="md-name-chips" style="margin-top:6px;">${waitlist.map(([pid, v]) => {
+      const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트') };
+      return `<span class="md-chip md-chip-wait">${escapeHtml(p.name)}</span>`;
+    }).join('')}</div>` : ''}
+
+    ${(maybes.length || declines.length) ? `
+    <div style="display:flex;gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+      ${maybes.length ? `<div style="flex:1;">
+        <div style="font-size:9.5px;font-weight:800;color:#92400e;letter-spacing:0.04em;margin-bottom:5px;">미정 ${maybes.length}</div>
+        <div class="md-name-chips">${maybes.map(([pid, v]) => {
+          const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트') };
+          return `<span class="md-chip md-chip-maybe">${escapeHtml(p.name)}</span>`;
+        }).join('')}</div>
+      </div>` : ''}
+      ${declines.length ? `<div style="flex:1;">
+        <div style="font-size:9.5px;font-weight:800;color:var(--text-3);letter-spacing:0.04em;margin-bottom:5px;">불참 ${declines.length}</div>
+        <div class="md-name-chips">${declines.map(([pid, v]) => {
+          const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트') };
+          return `<span class="md-chip md-chip-decline">${escapeHtml(p.name)}</span>`;
+        }).join('')}</div>
+      </div>` : ''}
+    </div>` : ''}
 
     <div style="display:flex;gap:8px;margin-top:18px;flex-direction:column;">
       ${status === 'team_ready' || status === 'in_progress' ? `
@@ -2272,6 +2261,68 @@ function openManualAttendModal(matchId) {
 
   showModal(buildHtml());
   attachEvents();
+}
+
+function openGuestPickerModal(matchId) {
+  const allPlayers = Object.values(state.players || {}).sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '', 'ko-KR'));
+
+  // Count existing guests per host for numbering
+  const votes = (state.matches[matchId] || {}).votes || {};
+  const guestCountByHost = {};
+  Object.entries(votes).forEach(([pid, v]) => {
+    if (pid.startsWith('guest_') && v.guestOf) {
+      guestCountByHost[v.guestOf] = (guestCountByHost[v.guestOf] || 0) + 1;
+    }
+  });
+
+  showModal(`
+    <h3 style="margin-bottom:4px;">게스트 참석</h3>
+    <div style="font-size:11px;color:var(--text-2);margin-bottom:14px;">이 게스트를 부른 팀원을 선택해주세요</div>
+    <div class="mm-player-grid" style="margin-bottom:12px;">
+      ${allPlayers.map(p => `
+        <button class="mm-pick-btn" data-host="${p.id}" data-host-name="${escapeHtml(p.name)}">
+          <span class="mpb-badge">　</span>
+          <span>${escapeHtml(p.name)}</span>
+        </button>
+      `).join('')}
+    </div>
+    <button class="btn btn-outline btn-block" id="gp-external" style="font-size:12px;margin-bottom:8px;">외부 게스트 (팀원 없음)</button>
+    <button class="btn btn-ghost btn-block btn-sm" data-modal-close>취소</button>
+  `);
+
+  const selectHost = (hostId, hostName) => {
+    const existingCount = guestCountByHost[hostId] || 0;
+    const num = existingCount + 1;
+    const guestId = 'guest_' + uid();
+    const displayName = num === 1 ? `${hostName} 게스트` : `${hostName} 게스트${num}`;
+    state.voterId = guestId;
+    state.voterPinVerified = true;
+    state._guestName = displayName;
+    state._guestOf = hostId;
+    state._guestOfName = hostName;
+    sessionStorage.setItem(pinSessionKey(matchId, guestId), '1');
+    localStorage.setItem('voterId_' + matchId, guestId);
+    closeModal();
+    renderVotePage();
+  };
+
+  document.querySelectorAll('[data-host]').forEach(btn => {
+    btn.onclick = () => selectHost(btn.dataset.host, btn.dataset.hostName);
+  });
+
+  $('#gp-external').onclick = () => {
+    const guestId = 'guest_' + uid();
+    state.voterId = guestId;
+    state.voterPinVerified = true;
+    state._guestName = '외부 게스트';
+    state._guestOf = null;
+    state._guestOfName = null;
+    sessionStorage.setItem(pinSessionKey(matchId, guestId), '1');
+    localStorage.setItem('voterId_' + matchId, guestId);
+    closeModal();
+    renderVotePage();
+  };
 }
 
 function showFinishedMatchDetail(m) {
@@ -2494,15 +2545,8 @@ function renderVotePage() {
     b.onclick = async () => {
       const pid = b.dataset.pid;
       if (pid === '__guest__') {
-        const name = prompt('게스트 이름을 입력해주세요');
-        if (!name) return;
-        const guestId = 'guest_' + uid();
-        state.voterId = guestId;
-        state.voterPinVerified = true;
-        sessionStorage.setItem(pinSessionKey(state.currentMatchId, guestId), '1');
-        localStorage.setItem('voterId_' + state.currentMatchId, guestId);
-        state._guestName = name.trim();
-        renderVotePage();
+        openGuestPickerModal(state.currentMatchId);
+        return;
       } else {
         const player = state.players[pid];
         if (!player) return;
@@ -2548,7 +2592,7 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
     }
     html += `<div class="roster-confirmed-grid">`;
     colMajor.forEach(([[pid, v], origIdx]) => {
-      const name = (state.players[pid] && state.players[pid].name) || v.name || '게스트';
+      const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트');
       html += `<div class="ric">
         <span class="ric-num">${origIdx + 1}</span>
         <span class="ric-name">${escapeHtml(name)}</span>
@@ -2565,7 +2609,7 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
     html += `<div style="font-size:10px;font-weight:800;color:var(--warn);letter-spacing:0.04em;margin-bottom:5px;">대기</div>`;
     html += `<div class="roster-list">`;
     waitlist.forEach(([pid, v], i) => {
-      const name = (state.players[pid] && state.players[pid].name) || v.name || '게스트';
+      const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트');
       html += `<div class="roster-item waitlist">
         <span class="roster-num">W${i + 1}</span>
         <span class="roster-icon">${svgRaw('hourglass')}</span>
@@ -2587,7 +2631,7 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
       html += `<div style="font-size:10px;font-weight:800;color:#92400e;letter-spacing:0.04em;margin-bottom:4px;">미정 (${maybes.length})</div>`;
       html += `<div class="status-chips">`;
       maybes.forEach(([pid, v]) => {
-        const name = (state.players[pid] && state.players[pid].name) || v.name || '게스트';
+        const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트');
         html += `<span class="status-chip sc-maybe">${svgRaw('dash')}${escapeHtml(name)}</span>`;
       });
       html += `</div></div>`;
@@ -2598,7 +2642,7 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
       html += `<div style="font-size:10px;font-weight:800;color:#64748b;letter-spacing:0.04em;margin-bottom:4px;">불참 (${declines.length})</div>`;
       html += `<div class="status-chips">`;
       declines.forEach(([pid, v]) => {
-        const name = (state.players[pid] && state.players[pid].name) || v.name || '게스트';
+        const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트');
         html += `<span class="status-chip sc-decline">${svgRaw('x')}${escapeHtml(name)}</span>`;
       });
       html += `</div></div>`;
@@ -2637,7 +2681,9 @@ async function castVote(matchId, voterId, status) {
   }
   const player = state.players[voterId];
   const guestName = state._guestName || (voterId.startsWith('guest_') ? '게스트' : '');
-  const voteData = { status, ts: Date.now(), name: player ? player.name : guestName };
+  const voteData = { status, ts: Date.now(), name: player ? player.name : guestName,
+    ...(voterId.startsWith('guest_') ? { guestOf: state._guestOf || null, guestOfName: state._guestOfName || null } : {})
+  };
   await db.ref(`matches/${matchId}/votes/${voterId}`).set(voteData);
   toast(status === 'attend' ? '참석 등록' : status === 'decline' ? '불참' : '미정', 'ok');
 }
