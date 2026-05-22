@@ -769,6 +769,17 @@
   }
   .drag-item .di-x:hover { background: var(--danger-soft); color: var(--danger); }
   .drag-item .di-x svg { width: 10px; height: 10px; stroke-width: 2.5; }
+  .di-guest-badge {
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    color: #fff;
+    font-size: 8px; font-weight: 900; letter-spacing: 0.03em;
+    border-radius: 4px;
+    padding: 1px 4px; height: 14px;
+    margin-left: 3px;
+    line-height: 1;
+  }
   .tb-toolbar {
     display: flex;
     flex-wrap: nowrap;
@@ -3150,7 +3161,18 @@ function renderTeamBuilderPage() {
         const it = document.createElement('div');
         it.className = 'drag-item';
         it.dataset.pid = p.id;
-        it.innerHTML = `<span class="di-name">${escapeHtml(p.name)}</span>${state.isAdmin ? `<span class="di-x">${svgRaw('x')}</span>` : ''}`;
+        // 게스트 이름 파싱: "홍길동 게스트2" → host="홍길동", num="2"
+        const guestMatch = isGuestPlayer(p) ? (p.name || '').match(/^(.+) 게스트(\d*)$/) : null;
+        let diNameHtml, diGuestBadge = '';
+        if (guestMatch) {
+          const hostShort = guestMatch[1] === '외부' ? '외부' : guestMatch[1];
+          const gNum = guestMatch[2] || '';
+          diNameHtml = escapeHtml(hostShort);
+          diGuestBadge = `<span class="di-guest-badge">G${gNum}</span>`;
+        } else {
+          diNameHtml = escapeHtml(p.name);
+        }
+        it.innerHTML = `<span class="di-name">${diNameHtml}</span>${diGuestBadge}${state.isAdmin ? `<span class="di-x">${svgRaw('x')}</span>` : ''}`;
         if (state.isAdmin) {
           it.querySelector('.di-x').onclick = (e) => {
             e.stopPropagation();
@@ -3873,7 +3895,10 @@ function renderTeamSharePage() {
       const it = document.createElement('div');
       it.className = 'drag-item';
       it.style.cursor = 'default';
-      it.innerHTML = `<span class="di-name">${escapeHtml(p.name)}</span>`;
+      const gm2 = isGuestPlayer(p) ? (p.name || '').match(/^(.+) 게스트(\d*)$/) : null;
+      it.innerHTML = gm2
+        ? `<span class="di-name">${escapeHtml(gm2[1])}</span><span class="di-guest-badge">G${gm2[2] || ''}</span>`
+        : `<span class="di-name">${escapeHtml(p.name)}</span>`;
       list.appendChild(it);
     });
     // 레이더 차트 (elOverride로 ID 충돌 방지)
