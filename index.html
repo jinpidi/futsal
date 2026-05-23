@@ -507,7 +507,7 @@
     display: inline-block;
     font-weight: 700;
   }
-  .player-pick-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .player-pick-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
   .pick-btn {
     background: var(--surface);
     border: 1.5px solid var(--border);
@@ -662,8 +662,8 @@
     border-radius: 20px;
     padding: 3px 9px;
   }
-  .md-name-chips { display: flex; flex-wrap: wrap; gap: 5px; }
-  .md-chip { font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
+  .md-name-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 5px; }
+  .md-chip { font-size: 11px; font-weight: 700; padding: 4px 6px; border-radius: 20px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .md-chip-attend { background: var(--accent-soft); color: var(--accent-2); }
   .md-chip-wait { background: rgba(245,158,11,0.12); color: #92400e; }
   .md-chip-maybe { background: rgba(245,158,11,0.1); color: #92400e; }
@@ -736,16 +736,16 @@
   .team-rating.has-score { background: var(--primary); color: #fff; }
   .drag-item {
     background: var(--surface);
-    padding: 3px 6px;
+    padding: 4px 8px;
     border-radius: 6px;
     border: 1px solid var(--border);
     font-weight: 700;
     font-size: 10.5px;
-    display: inline-flex;
+    display: flex;
     align-items: center;
     cursor: move;
-    width: fit-content;
-    max-width: 100%;
+    width: 100%;
+    box-sizing: border-box;
     color: var(--text);
     gap: 2px;
   }
