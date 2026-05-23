@@ -2138,11 +2138,11 @@ function openMatchDetail(id) {
       ${state.isAdmin ? `<button class="btn btn-outline btn-sm" id="md-manual-attend" style="font-size:11px;padding:4px 10px;">✏️ 수기</button>` : ''}
     </div>
     ${confirmed.length ? `<div class="md-name-chips">${confirmed.map(([pid, v]) => {
-      const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트') };
+      const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} Guest` : '외부 Guest') };
       return `<span class="md-chip md-chip-attend">${escapeHtml(p.name)}</span>`;
     }).join('')}</div>` : `<div style="font-size:11.5px;color:var(--text-3);padding:6px 0 10px;">아직 참석자 없음</div>`}
     ${waitlist.length ? `<div class="md-name-chips" style="margin-top:6px;">${waitlist.map(([pid, v]) => {
-      const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트') };
+      const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} Guest` : '외부 Guest') };
       return `<span class="md-chip md-chip-wait">${escapeHtml(p.name)}</span>`;
     }).join('')}</div>` : ''}
 
@@ -2151,14 +2151,14 @@ function openMatchDetail(id) {
       ${maybes.length ? `<div style="flex:1;">
         <div style="font-size:9.5px;font-weight:800;color:#92400e;letter-spacing:0.04em;margin-bottom:5px;">미정 ${maybes.length}</div>
         <div class="md-name-chips">${maybes.map(([pid, v]) => {
-          const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트') };
+          const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} Guest` : '외부 Guest') };
           return `<span class="md-chip md-chip-maybe">${escapeHtml(p.name)}</span>`;
         }).join('')}</div>
       </div>` : ''}
       ${declines.length ? `<div style="flex:1;">
         <div style="font-size:9.5px;font-weight:800;color:var(--text-3);letter-spacing:0.04em;margin-bottom:5px;">불참 ${declines.length}</div>
         <div class="md-name-chips">${declines.map(([pid, v]) => {
-          const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트') };
+          const p = state.players[pid] || { name: v.name || (v.guestOfName ? `${v.guestOfName} Guest` : '외부 Guest') };
           return `<span class="md-chip md-chip-decline">${escapeHtml(p.name)}</span>`;
         }).join('')}</div>
       </div>` : ''}
@@ -2282,20 +2282,20 @@ function openGuestPickerModal(matchId) {
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko-KR'));
   const votes = (state.matches[matchId] || {}).votes || {};
 
-  // 기존 게스트 이름 집계 → 넘버링용
+  // 기존 Guest 이름 집계 → 넘버링용
   const existingGuestNames = Object.entries(votes)
     .filter(([pid, v]) => pid.startsWith('guest_'))
     .map(([_, v]) => v.name || '');
 
   function guestNameForHost(hostId, hostName) {
-    const pattern = hostName + ' 게스트';
+    const pattern = hostName + ' Guest';
     const count = existingGuestNames.filter(n => n === pattern || (n.startsWith(pattern) && /\d$/.test(n))).length;
-    return count === 0 ? `${hostName} 게스트` : `${hostName} 게스트${count + 1}`;
+    return count === 0 ? `${hostName} Guest` : `${hostName} Guest${count + 1}`;
   }
 
   showModal(`
-    <h3 style="margin-bottom:4px;">게스트 참석</h3>
-    <div style="font-size:11.5px;color:var(--text-2);margin-bottom:14px;font-weight:600;">이 게스트를 부른 팀원을 선택해주세요</div>
+    <h3 style="margin-bottom:4px;">Guest 참석</h3>
+    <div style="font-size:11.5px;color:var(--text-2);margin-bottom:14px;font-weight:600;">이 Guest를 부른 팀원을 선택해주세요</div>
     <div class="mm-player-grid" id="gp-grid">
       ${allPlayers.map(p => `
         <button class="mm-pick-btn" data-hid="${p.id}" data-hname="${escapeHtml(p.name)}">
@@ -2306,7 +2306,7 @@ function openGuestPickerModal(matchId) {
     </div>
     <div style="height:1px;background:var(--border);margin:12px 0;"></div>
     <button class="btn btn-outline btn-block" id="gp-external" style="font-size:12.5px;font-weight:700;">
-      👤 외부 게스트
+      👤 외부 Guest
     </button>
     <div style="font-size:10px;color:var(--text-3);text-align:center;margin-top:5px;margin-bottom:2px;">우리 팀원이 아닌 외부인</div>
     <button class="btn btn-ghost btn-sm btn-block" data-modal-close style="margin-top:10px;">취소</button>
@@ -2346,8 +2346,8 @@ function openGuestPickerModal(matchId) {
   });
 
   $('#gp-external').onclick = () => {
-    const extCount = existingGuestNames.filter(n => n.startsWith('외부 게스트')).length;
-    const displayName = extCount === 0 ? '외부 게스트' : `외부 게스트${extCount + 1}`;
+    const extCount = existingGuestNames.filter(n => n.startsWith('외부 Guest')).length;
+    const displayName = extCount === 0 ? '외부 Guest' : `외부 Guest${extCount + 1}`;
     const guestId = 'guest_' + uid();
     state.voterId = guestId;
     state.voterPinVerified = true;
@@ -2550,7 +2550,7 @@ function renderVotePage() {
               ${v ? `<span class="pb-vote-bar"></span>` : ''}
             </div>`;
           }).join('')}
-          <div class="pick-btn ${state.voterId && state.voterId.startsWith('guest_') ? 'picked' : ''}" data-pid="__guest__">+ 게스트</div>
+          <div class="pick-btn ${state.voterId && state.voterId.startsWith('guest_') ? 'picked' : ''}" data-pid="__guest__">+ Guest</div>
         </div>
       </div>
 
@@ -2628,7 +2628,7 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
     }
     html += `<div class="roster-confirmed-grid">`;
     colMajor.forEach(([[pid, v], origIdx]) => {
-      const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트');
+      const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} Guest` : '외부 Guest');
       html += `<div class="ric">
         <span class="ric-num">${origIdx + 1}</span>
         <span class="ric-name">${escapeHtml(name)}</span>
@@ -2645,7 +2645,7 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
     html += `<div style="font-size:10px;font-weight:800;color:var(--warn);letter-spacing:0.04em;margin-bottom:5px;">대기</div>`;
     html += `<div class="roster-list">`;
     waitlist.forEach(([pid, v], i) => {
-      const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트');
+      const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} Guest` : '외부 Guest');
       html += `<div class="roster-item waitlist">
         <span class="roster-num">W${i + 1}</span>
         <span class="roster-icon">${svgRaw('hourglass')}</span>
@@ -2667,7 +2667,7 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
       html += `<div style="font-size:10px;font-weight:800;color:#92400e;letter-spacing:0.04em;margin-bottom:4px;">미정 (${maybes.length})</div>`;
       html += `<div class="status-chips">`;
       maybes.forEach(([pid, v]) => {
-        const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트');
+        const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} Guest` : '외부 Guest');
         html += `<span class="status-chip sc-maybe">${svgRaw('dash')}${escapeHtml(name)}</span>`;
       });
       html += `</div></div>`;
@@ -2678,7 +2678,7 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
       html += `<div style="font-size:10px;font-weight:800;color:#64748b;letter-spacing:0.04em;margin-bottom:4px;">불참 (${declines.length})</div>`;
       html += `<div class="status-chips">`;
       declines.forEach(([pid, v]) => {
-        const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} 게스트` : '외부 게스트');
+        const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} Guest` : '외부 Guest');
         html += `<span class="status-chip sc-decline">${svgRaw('x')}${escapeHtml(name)}</span>`;
       });
       html += `</div></div>`;
@@ -2716,7 +2716,7 @@ async function castVote(matchId, voterId, status) {
     if (!ok) return;
   }
   const player = state.players[voterId];
-  const guestName = state._guestName || (voterId.startsWith('guest_') ? '게스트' : '');
+  const guestName = state._guestName || (voterId.startsWith('guest_') ? 'Guest' : '');
   const voteData = { status, ts: Date.now(), name: player ? player.name : guestName,
     ...(voterId.startsWith('guest_') ? { guestOf: state._guestOf || null, guestOfName: state._guestOfName || null } : {})
   };
@@ -3094,7 +3094,7 @@ function renderTeamBuilderPage() {
     const players = confirmed.map(([pid, v]) => {
       const p = state.players[pid];
       if (p) return { id: pid, ...p, score: calcScore(p) };
-      return guestPlayerWithId(pid, v.name || '게스트');
+      return guestPlayerWithId(pid, v.name || 'Guest');
     });
     teams = snakeDraft(players, 2);
   }
@@ -3105,7 +3105,7 @@ function renderTeamBuilderPage() {
   const guestCount  = allMembers.filter(p => isGuestPlayer(p)).length;
   const totalCount  = allMembers.length;
   const countLabel  = guestCount > 0
-    ? `총 ${totalCount}명 (팀원 ${memberCount}명 + 게스트 ${guestCount}명)`
+    ? `총 ${totalCount}명 (팀원 ${memberCount}명 + Guest ${guestCount}명)`
     : `참석 ${totalCount}명`;
 
   root.innerHTML = `
@@ -3136,7 +3136,7 @@ function renderTeamBuilderPage() {
 
     <div class="tb-footer">
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-back-recruiting" title="모집중으로 되돌리기">← 모집중</button>` : ''}
-      ${state.isAdmin ? `<button class="btn btn-outline" id="tb-add-guest"><span class="bn-ic">${svgRaw('plus')}</span>게스트</button>` : ''}
+      ${state.isAdmin ? `<button class="btn btn-outline" id="tb-add-guest"><span class="bn-ic">${svgRaw('plus')}</span>Guest</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-save-plan">편성 저장</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-accent" id="tb-start-game">경기 시작</button>` : ''}
     </div>
@@ -3172,8 +3172,8 @@ function renderTeamBuilderPage() {
         const it = document.createElement('div');
         it.className = 'drag-item';
         it.dataset.pid = p.id;
-        // 게스트 이름 파싱: "홍길동 게스트2" → host="홍길동", num="2"
-        const guestMatch = isGuestPlayer(p) ? (p.name || '').match(/^(.+) 게스트(\d*)$/) : null;
+        // Guest 이름 파싱: "홍길동 Guest2" → host="홍길동", num="2"
+        const guestMatch = isGuestPlayer(p) ? (p.name || '').match(/^(.+) Guest(\d*)$/) : null;
         let diNameHtml, diGuestBadge = '';
         if (guestMatch) {
           const hostShort = guestMatch[1] === '외부' ? '외부' : guestMatch[1];
@@ -3425,22 +3425,22 @@ function openGuestHostPickerModal(onSelect) {
   const allPlayers = Object.values(state.players || {})
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko-KR'));
 
-  // 현재 팀빌더 멤버 중 이미 추가된 게스트 이름 집계 → 넘버링용
+  // 현재 팀빌더 멤버 중 이미 추가된 Guest 이름 집계 → 넘버링용
   const existingNames = [];
   (_tbActive || []).forEach(t => (t.members || []).forEach(p => {
     if (isGuestPlayer(p)) existingNames.push(p.name || '');
   }));
 
   function guestNameForHost(hostName) {
-    // 이 호스트의 게스트가 몇 명인지 카운트
-    const pattern = hostName + ' 게스트';
+    // 이 호스트의 Guest가 몇 명인지 카운트
+    const pattern = hostName + ' Guest';
     const count = existingNames.filter(n => n === pattern || n.startsWith(pattern)).length;
-    return count === 0 ? `${hostName} 게스트` : `${hostName} 게스트${count + 1}`;
+    return count === 0 ? `${hostName} Guest` : `${hostName} Guest${count + 1}`;
   }
 
   showModal(`
-    <h3 style="margin-bottom:4px;">게스트 추가</h3>
-    <div style="font-size:11.5px;color:var(--text-2);margin-bottom:14px;font-weight:600;">이 게스트를 부른 팀원을 선택해주세요</div>
+    <h3 style="margin-bottom:4px;">Guest 추가</h3>
+    <div style="font-size:11.5px;color:var(--text-2);margin-bottom:14px;font-weight:600;">이 Guest를 부른 팀원을 선택해주세요</div>
     <div class="mm-player-grid" id="ghp-grid">
       ${allPlayers.map(p => `
         <button class="mm-pick-btn" data-hid="${p.id}" data-hname="${escapeHtml(p.name)}">
@@ -3451,7 +3451,7 @@ function openGuestHostPickerModal(onSelect) {
     </div>
     <div style="height:1px;background:var(--border);margin:12px 0;"></div>
     <button class="btn btn-outline btn-block" id="ghp-ext" style="font-size:12.5px;font-weight:700;">
-      👤 외부 게스트
+      👤 외부 Guest
     </button>
     <div style="font-size:10px;color:var(--text-3);text-align:center;margin-top:6px;">우리 팀원이 아닌 외부인</div>
     <button class="btn btn-ghost btn-sm btn-block" data-modal-close style="margin-top:10px;">취소</button>
@@ -3477,8 +3477,8 @@ function openGuestHostPickerModal(onSelect) {
   });
 
   $('#ghp-ext').onclick = () => {
-    const extCount = existingNames.filter(n => n.startsWith('외부 게스트')).length;
-    const gname = extCount === 0 ? '외부 게스트' : `외부 게스트${extCount + 1}`;
+    const extCount = existingNames.filter(n => n.startsWith('외부 Guest')).length;
+    const gname = extCount === 0 ? '외부 Guest' : `외부 Guest${extCount + 1}`;
     closeModal();
     onSelect(gname);
   };
@@ -3488,7 +3488,7 @@ function guestPlayerWithId(id, name) {
   const avg = teamAvgStats();
   const score = calcScore(avg);
   return {
-    id, name: String(name || '게스트').trim(), score,
+    id, name: String(name || 'Guest').trim(), score,
     att: avg.att, pow: avg.pow, spd: avg.spd, pas: avg.pas, def: avg.def, tem: avg.tem, sta: avg.sta, org: avg.org,
     position: '멀티'
   };
@@ -3906,7 +3906,7 @@ function renderTeamSharePage() {
       const it = document.createElement('div');
       it.className = 'drag-item';
       it.style.cursor = 'default';
-      const gm2 = isGuestPlayer(p) ? (p.name || '').match(/^(.+) 게스트(\d*)$/) : null;
+      const gm2 = isGuestPlayer(p) ? (p.name || '').match(/^(.+) Guest(\d*)$/) : null;
       it.innerHTML = gm2
         ? `<span class="di-name">${escapeHtml(gm2[1])}</span><span class="di-guest-badge">G${gm2[2] || ''}</span>`
         : `<span class="di-name">${escapeHtml(p.name)}</span>`;
