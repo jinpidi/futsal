@@ -736,24 +736,24 @@
   .team-rating.has-score { background: var(--primary); color: #fff; }
   .drag-item {
     background: var(--surface);
-    padding: 3px 5px;
+    padding: 3px 6px;
     border-radius: 6px;
     border: 1px solid var(--border);
     font-weight: 700;
     font-size: 10.5px;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     cursor: move;
-    min-width: 0;
+    width: fit-content;
+    max-width: 100%;
     color: var(--text);
     gap: 2px;
   }
   .drag-item .di-label {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 2px;
     min-width: 0;
-    flex: 1;
     overflow: hidden;
   }
   .drag-item .di-name {
@@ -761,7 +761,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    flex-shrink: 1;
   }
   .drag-item .di-x {
     color: var(--text-3);
