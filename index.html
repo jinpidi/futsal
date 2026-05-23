@@ -681,12 +681,12 @@
   }
   .team-body {
     display: grid;
-    grid-template-columns: 1fr 180px;
-    gap: 10px;
-    align-items: start;
+    grid-template-columns: 1fr 160px;
+    gap: 8px;
+    align-items: center;
   }
   @media (max-width: 340px) {
-    .team-body { grid-template-columns: 1fr 150px; }
+    .team-body { grid-template-columns: 1fr 130px; }
   }
   .drag-list {
     display: flex;
@@ -696,7 +696,7 @@
   }
   .team-radar { overflow: visible; line-height: 0; display: flex; justify-content: flex-end; }
   .radar-placeholder {
-    width: 172px; height: 172px;
+    width: 152px; height: 152px;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
     border-radius: 50%;
     background: var(--surface-2); border: 1px dashed var(--border-2);
@@ -742,19 +742,26 @@
     font-weight: 700;
     font-size: 10.5px;
     display: flex;
-    justify-content: space-between;
     align-items: center;
     cursor: move;
     min-width: 0;
     color: var(--text);
     gap: 2px;
   }
+  .drag-item .di-label {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+  }
   .drag-item .di-name {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    flex: 1;
+    flex-shrink: 1;
   }
   .drag-item .di-x {
     color: var(--text-3);
@@ -3180,7 +3187,7 @@ function renderTeamBuilderPage() {
         } else {
           diNameHtml = escapeHtml(p.name);
         }
-        it.innerHTML = `<span class="di-name">${diNameHtml}</span>${diGuestBadge}${state.isAdmin ? `<span class="di-x">${svgRaw('x')}</span>` : ''}`;
+        it.innerHTML = `<span class="di-label"><span class="di-name">${diNameHtml}</span>${diGuestBadge}</span>${state.isAdmin ? `<span class="di-x">${svgRaw('x')}</span>` : ''}`;
         if (state.isAdmin) {
           it.querySelector('.di-x').onclick = (e) => {
             e.stopPropagation();
@@ -3557,7 +3564,7 @@ function paintRadarChart(idx, members, allTeamMems, elOverride) {
   const tc  = RADAR_TEAM_COLORS[idx] || RADAR_TEAM_COLORS[0];
   const N   = RADAR_AXES.length;  // 8-axis octagon
   const CX  = 88, CY = 88, R = 58, LR = R + 24;
-  const W   = 180, H = 180;
+  const W   = 160, H = 160;
   const ANG = (i) => -Math.PI / 2 + i * (2 * Math.PI / N);
   const pt  = (r, i) => ({ x: CX + r * Math.cos(ANG(i)), y: CY + r * Math.sin(ANG(i)) });
   const ps  = (r, i) => { const p = pt(r, i); return `${p.x.toFixed(2)},${p.y.toFixed(2)}`; };
@@ -3905,8 +3912,8 @@ function renderTeamSharePage() {
       it.style.cursor = 'default';
       const gm2 = isGuestPlayer(p) ? (p.name || '').match(/^(.+) Guest(\d*)$/) : null;
       it.innerHTML = gm2
-        ? `<span class="di-name">${escapeHtml(gm2[1])}</span><span class="di-guest-badge">Guest${gm2[2] || ''}</span>`
-        : `<span class="di-name">${escapeHtml(p.name)}</span>`;
+        ? `<span class="di-label"><span class="di-name">${escapeHtml(gm2[1])}</span><span class="di-guest-badge">Guest${gm2[2] || ''}</span></span>`
+        : `<span class="di-label"><span class="di-name">${escapeHtml(p.name)}</span></span>`;
       list.appendChild(it);
     });
     // 레이더 차트 (elOverride로 ID 충돌 방지)
