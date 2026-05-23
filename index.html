@@ -776,7 +776,7 @@
     color: #fff;
     font-size: 8px; font-weight: 900; letter-spacing: 0.03em;
     border-radius: 4px;
-    padding: 1px 5px; height: 15px; min-width: 26px;
+    padding: 1px 5px; height: 15px; min-width: 38px;
     margin-left: 3px;
     line-height: 1;
     white-space: nowrap;
@@ -3179,7 +3179,7 @@ function renderTeamBuilderPage() {
           const hostShort = guestMatch[1] === '외부' ? '외부' : guestMatch[1];
           const gNum = guestMatch[2] || '';
           diNameHtml = escapeHtml(hostShort);
-          diGuestBadge = `<span class="di-guest-badge">G${gNum}</span>`;
+          diGuestBadge = `<span class="di-guest-badge">Guest${gNum}</span>`;
         } else {
           diNameHtml = escapeHtml(p.name);
         }
@@ -3908,7 +3908,7 @@ function renderTeamSharePage() {
       it.style.cursor = 'default';
       const gm2 = isGuestPlayer(p) ? (p.name || '').match(/^(.+) Guest(\d*)$/) : null;
       it.innerHTML = gm2
-        ? `<span class="di-name">${escapeHtml(gm2[1])}</span><span class="di-guest-badge">G${gm2[2] || ''}</span>`
+        ? `<span class="di-name">${escapeHtml(gm2[1])}</span><span class="di-guest-badge">Guest${gm2[2] || ''}</span>`
         : `<span class="di-name">${escapeHtml(p.name)}</span>`;
       list.appendChild(it);
     });
