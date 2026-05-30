@@ -56,6 +56,9 @@
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; }
+  @supports (padding: env(safe-area-inset-bottom)) {
+    body { padding-bottom: env(safe-area-inset-bottom); }
+  }
   body {
     font-family: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     background: var(--bg);
@@ -82,6 +85,9 @@
     align-items: center;
     gap: 6px;
     padding: 11px 14px;
+    padding-top: calc(11px + env(safe-area-inset-top));
+    padding-left: calc(14px + env(safe-area-inset-left));
+    padding-right: calc(14px + env(safe-area-inset-right));
     background: var(--sidebar-bg);
     color: #fff;
     position: sticky;
@@ -650,7 +656,7 @@
     white-space: nowrap;
   }
   .status-chip svg { width: 9px; height: 9px; stroke-width: 3; flex-shrink: 0; }
-  .status-chip.sc-maybe { background: #fff7ed; color: #92400e; border: 1px solid #fed7aa; }
+  .status-chip.sc-maybe { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
   .status-chip.sc-decline { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
   .novote-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0; }
   .novote-chip {
@@ -665,8 +671,8 @@
   .md-name-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 5px; }
   .md-chip { font-size: 11px; font-weight: 700; padding: 4px 6px; border-radius: 20px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .md-chip-attend { background: var(--accent-soft); color: var(--accent-2); }
-  .md-chip-wait { background: rgba(245,158,11,0.12); color: #92400e; }
-  .md-chip-maybe { background: rgba(245,158,11,0.1); color: #92400e; }
+  .md-chip-wait { background: rgba(251,146,60,0.18); color: #c2410c; }
+  .md-chip-maybe { background: #eff6ff; color: #1d4ed8; }
   .md-chip-decline { background: var(--surface-3); color: var(--text-3); }
 
   /* ============ TEAM BUILDER ============ */
@@ -2647,16 +2653,11 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
 
   if (waitlist.length) {
     html += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">`;
-    html += `<div style="font-size:10px;font-weight:800;color:var(--warn);letter-spacing:0.04em;margin-bottom:5px;">대기</div>`;
-    html += `<div class="roster-list">`;
+    html += `<div style="font-size:10px;font-weight:800;color:#c2410c;letter-spacing:0.04em;margin-bottom:5px;">대기 (${waitlist.length})</div>`;
+    html += `<div class="status-chips">`;
     waitlist.forEach(([pid, v], i) => {
       const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} Guest` : '외부 Guest');
-      html += `<div class="roster-item waitlist">
-        <span class="roster-num">W${i + 1}</span>
-        <span class="roster-icon">${svgRaw('hourglass')}</span>
-        <span class="roster-name">${escapeHtml(name)}</span>
-        <span class="roster-time">${fmtVoteTimestamp(v.ts)}</span>
-      </div>`;
+      html += `<span class="status-chip" style="background:rgba(251,146,60,0.15);color:#c2410c;border:1px solid rgba(251,146,60,0.35);">W${i+1} ${escapeHtml(name)}</span>`;
     });
     html += `</div></div>`;
   }
@@ -2669,7 +2670,7 @@ function renderTeamRoster(allPlayers, votes, confirmed, waitlist) {
 
     if (maybes.length) {
       html += `<div style="margin-bottom:${(declines.length || noVotePlayers.length) ? '8px' : '0'};">`;
-      html += `<div style="font-size:10px;font-weight:800;color:#92400e;letter-spacing:0.04em;margin-bottom:4px;">미정 (${maybes.length})</div>`;
+      html += `<div style="font-size:10px;font-weight:800;color:#1d4ed8;letter-spacing:0.04em;margin-bottom:4px;">미정 (${maybes.length})</div>`;
       html += `<div class="status-chips">`;
       maybes.forEach(([pid, v]) => {
         const name = (state.players[pid] && state.players[pid].name) || v.name || (v.guestOfName ? `${v.guestOfName} Guest` : '외부 Guest');
@@ -2751,9 +2752,30 @@ let _wakeLock  = null;
 
 function _unlockAudio() {
   try {
+    if (_audioCtx && _audioCtx.state === 'closed') _audioCtx = null;
     if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (_audioCtx.state === 'suspended') _audioCtx.resume();
   } catch (e) {}
+}
+
+// Keep AudioContext alive during a match by playing a near-silent tick every 25s
+let _audioKeepAliveTimer = null;
+function _startAudioKeepAlive() {
+  _stopAudioKeepAlive();
+  _audioKeepAliveTimer = setInterval(() => {
+    try {
+      if (!_audioCtx || _audioCtx.state === 'closed') return;
+      if (_audioCtx.state === 'suspended') { _audioCtx.resume(); return; }
+      const osc = _audioCtx.createOscillator();
+      const g = _audioCtx.createGain();
+      g.gain.value = 0.0001;
+      osc.connect(g); g.connect(_audioCtx.destination);
+      osc.start(); osc.stop(_audioCtx.currentTime + 0.05);
+    } catch(e) {}
+  }, 25000);
+}
+function _stopAudioKeepAlive() {
+  if (_audioKeepAliveTimer) { clearInterval(_audioKeepAliveTimer); _audioKeepAliveTimer = null; }
 }
 
 async function _requestWakeLock() {
@@ -2854,7 +2876,34 @@ function playAlarm(notifBody) {
       beep(880,  1.8, 4.30, 0.65);
     };
 
-    if (ctx.state === 'suspended') {
+    if (ctx.state === 'closed') {
+      // AudioContext was closed — recreate and retry once
+      try {
+        _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const ctx2 = _audioCtx;
+        ctx2.resume().then(() => {
+          // re-run fire() with new ctx (rebuild since closure captures old ctx)
+          const beep2 = (freq, harmonicRatio, delay, dur) => {
+            [freq, freq * harmonicRatio].forEach(f => {
+              const osc = ctx2.createOscillator();
+              const g   = ctx2.createGain();
+              osc.connect(g); g.connect(ctx2.destination);
+              osc.type = 'square';
+              osc.frequency.value = f;
+              const t = ctx2.currentTime + delay;
+              g.gain.setValueAtTime(0.75, t);
+              g.gain.setValueAtTime(0.75, t + dur * 0.8);
+              g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+              osc.start(t); osc.stop(t + dur);
+            });
+          };
+          beep2(1047, 1.5, 0.00, 0.18); beep2(1047, 1.5, 0.23, 0.18);
+          beep2(1047, 1.5, 0.46, 0.18); beep2(880,  2.0, 0.78, 0.55);
+          beep2(1047, 1.5, 1.42, 0.55); beep2(880,  2.0, 2.08, 0.80);
+          beep2(1047, 1.5, 3.00, 1.20); beep2(880,  1.8, 4.30, 0.65);
+        });
+      } catch(e2) {}
+    } else if (ctx.state === 'suspended') {
       ctx.resume().then(fire);
     } else {
       fire();
@@ -2879,6 +2928,7 @@ function _roundDots(current, total, phase) {
 
 function resetLiveTimer() {
   if (_liveTimer.interval) clearInterval(_liveTimer.interval);
+  _stopAudioKeepAlive();
   const rs = _liveTimer.roundSecs;
   const nr = _liveTimer.numRounds;
   _liveTimer = { roundSecs: rs, breakSecs: 60, phase: 'idle', roundIdx: 0, numRounds: nr, phaseEndAt: null, interval: null, alerted: false, warned2m: false };
@@ -3027,6 +3077,7 @@ function updateTimerDisplay() {
   const onStart = $('#lv-t-start');
   if (onStart) onStart.onclick = () => {
     _unlockAudio();
+    _startAudioKeepAlive();
     _requestNotifPerm();
     _requestWakeLock();
     _liveTimer.phase = 'playing';
@@ -3142,6 +3193,7 @@ function renderTeamBuilderPage() {
     <div class="tb-footer">
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-back-recruiting" title="모집중으로 되돌리기">← 모집중</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-add-guest"><span class="bn-ic">${svgRaw('plus')}</span>Guest</button>` : ''}
+      ${state.isAdmin ? `<button class="btn btn-outline" id="tb-last-minute" title="출결 조정">🔄 출결 조정</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-save-plan">편성 저장</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-accent" id="tb-start-game">경기 시작</button>` : ''}
     </div>
@@ -3267,6 +3319,59 @@ function renderTeamBuilderPage() {
         _tbActive[smallest].members.push(g);
         paint();
       });
+    };
+    $('#tb-last-minute').onclick = () => {
+      _tbActive = readTeamsFromDOM(_tbActive);
+      const currentIds = new Set(_tbActive.flatMap(t => (t.members || []).filter(p => !isGuestPlayer(p)).map(p => p.id)));
+      const allPlayers = Object.values(state.players || {}).sort((a, b) => (a.name||'').localeCompare(b.name||'', 'ko-KR'));
+
+      showModal(`
+        <h3 style="margin-bottom:4px;">출결 조정</h3>
+        <div style="font-size:11.5px;color:var(--text-2);margin-bottom:14px;font-weight:600;">팀에 포함할 선수를 선택/해제하세요</div>
+        <div class="mm-player-grid" id="lm-grid">
+          ${allPlayers.map(p => `
+            <button class="mm-pick-btn ${currentIds.has(p.id) ? 'mm-ta' : ''}" data-pid="${p.id}" data-pname="${escapeHtml(p.name)}">
+              <span class="mpb-badge">${currentIds.has(p.id) ? '포함' : '　'}</span>
+              <span>${escapeHtml(p.name)}</span>
+            </button>
+          `).join('')}
+        </div>
+        <div style="height:1px;background:var(--border);margin:12px 0;"></div>
+        <button class="btn btn-accent btn-block" id="lm-apply">적용</button>
+        <button class="btn btn-ghost btn-sm btn-block" data-modal-close style="margin-top:6px;">취소</button>
+      `);
+
+      const selected = new Set(currentIds);
+
+      document.querySelectorAll('#lm-grid .mm-pick-btn').forEach(btn => {
+        btn.onclick = () => {
+          const pid = btn.dataset.pid;
+          if (selected.has(pid)) {
+            selected.delete(pid);
+            btn.classList.remove('mm-ta');
+            btn.querySelector('.mpb-badge').textContent = '　';
+          } else {
+            selected.add(pid);
+            btn.classList.add('mm-ta');
+            btn.querySelector('.mpb-badge').textContent = '포함';
+          }
+        };
+      });
+
+      $('#lm-apply').onclick = () => {
+        closeModal();
+        // Rebuild teams: keep guests, replace regular players
+        const guests = _tbActive.flatMap(t => (t.members || []).filter(p => isGuestPlayer(p)));
+        const newPlayers = Array.from(selected).map(pid => {
+          const p = state.players[pid];
+          return p ? { id: pid, ...p, score: calcScore(p) } : null;
+        }).filter(Boolean);
+        const allNew = [...newPlayers, ...guests];
+        const numTeams = _tbActive.length || 2;
+        _tbActive = snakeDraft(allNew, numTeams);
+        paint();
+        toast('출결 조정 완료', 'ok');
+      };
     };
     $('#tb-save-plan').onclick = async () => {
       _tbActive = readTeamsFromDOM(_tbActive);
