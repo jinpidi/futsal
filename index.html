@@ -3168,7 +3168,7 @@ function renderTeamBuilderPage() {
     <div class="page-header">
       <div class="page-header-left">
         <h2 class="page-title">${escapeHtml(m.title)} · 팀 편성</h2>
-        <div class="page-subtitle">${fmtDate(m.date)} · ${countLabel}</div>
+        <div class="page-subtitle" id="tb-subtitle">${fmtDate(m.date)} · ${countLabel}</div>
       </div>
       <div class="page-header-right">
         <button class="icon-btn" id="tb-back" title="뒤로">${svgRaw('back')}</button>
@@ -3193,7 +3193,7 @@ function renderTeamBuilderPage() {
     <div class="tb-footer">
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-back-recruiting" title="모집중으로 되돌리기">← 모집중</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-add-guest"><span class="bn-ic">${svgRaw('plus')}</span>Guest</button>` : ''}
-      ${state.isAdmin ? `<button class="btn btn-outline" id="tb-last-minute" title="출결 조정">🔄 출결 조정</button>` : ''}
+      ${state.isAdmin ? `<button class="btn btn-outline" id="tb-last-minute"><span class="bn-ic">${svgRaw('users')}</span>출석 변경</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-save-plan">편성 저장</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-accent" id="tb-start-game">경기 시작</button>` : ''}
     </div>
@@ -3321,6 +3321,7 @@ function renderTeamBuilderPage() {
       });
     };
     $('#tb-last-minute').onclick = () => {
+      if (!state.isAdmin) return;
       _tbActive = readTeamsFromDOM(_tbActive);
       const currentIds = new Set(_tbActive.flatMap(t => (t.members || []).filter(p => !isGuestPlayer(p)).map(p => p.id)));
       const allPlayers = Object.values(state.players || {}).sort((a, b) => (a.name||'').localeCompare(b.name||'', 'ko-KR'));
@@ -3370,16 +3371,26 @@ function renderTeamBuilderPage() {
         const numTeams = _tbActive.length || 2;
         _tbActive = snakeDraft(allNew, numTeams);
         paint();
-        toast('출결 조정 완료', 'ok');
+        // 상단 참석 카운트 갱신
+        const allM = _tbActive.flatMap(t => t.members || []);
+        const mCnt = allM.filter(p => !isGuestPlayer(p)).length;
+        const gCnt = allM.filter(p => isGuestPlayer(p)).length;
+        const tCnt = allM.length;
+        const newLabel = gCnt > 0
+          ? `총 ${tCnt}명 (팀원 ${mCnt}명 + Guest ${gCnt}명)`
+          : `참석 ${tCnt}명`;
+        const sub = $('#tb-subtitle');
+        if (sub) {
+          const datePart = sub.textContent.split('·')[0].trim();
+          sub.textContent = `${datePart} · ${newLabel}`;
+        }
+        toast(`명단 편집 완료 · ${tCnt}명`, 'ok');
       };
     };
     $('#tb-save-plan').onclick = async () => {
       _tbActive = readTeamsFromDOM(_tbActive);
       const ok = await saveTeamPlan(state.currentMatchId, _tbActive);
-      if (ok) {
-        toast('팀 편성 저장됨', 'ok');
-        navigate('prematch');
-      }
+      if (ok) toast('팀 편성 저장됨 ✓', 'ok');
     };
   }
   const shareTeam = () => {
