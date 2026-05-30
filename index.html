@@ -809,11 +809,15 @@
   .tb-toolbar-spacer { flex: 1 0 8px; }
   .tb-footer {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     margin-top: 14px;
     align-items: center;
   }
-  .tb-footer .btn { flex: 1; min-width: 0; white-space: nowrap; }
+  .tb-footer .btn { flex: 1 1 auto; min-width: 0; white-space: nowrap; }
+  .tb-footer .btn-accent { flex: 2 1 auto; }
+  #tb-last-minute { flex: 1 1 auto; }
+  #tb-save-plan { flex: 1 1 auto; }
 
   /* ============ LIVE MATCH ============ */
   .live-banner {
@@ -987,6 +991,17 @@
   .timer-bar-fill.is-danger { background: var(--danger); }
   .timer-bar-sub { font-size: 9.5px; color: var(--text-3); font-weight: 700; text-align: right; }
   .timer-big.timer-danger { color: var(--danger); }
+  .timer-est-end {
+    margin-top: 8px;
+    font-size: 11.5px; font-weight: 800;
+    color: var(--text-2);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 10px;
+    text-align: center;
+    letter-spacing: 0.01em;
+  }
   .round-dots { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
   .rd-dot { width: 26px; height: 26px; border-radius: 50%; background: var(--surface-3); border: 1.5px solid var(--border); display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800; color: var(--text-3); }
   .rd-dot.rd-done { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-2); }
@@ -2778,6 +2793,37 @@ function _stopAudioKeepAlive() {
   if (_audioKeepAliveTimer) { clearInterval(_audioKeepAliveTimer); _audioKeepAliveTimer = null; }
 }
 
+let _liveTimerSaveInterval = null;
+
+function _saveLiveTimerState() {
+  const matchId = state.currentMatchId;
+  if (!matchId || !window.db) return;
+  const lt = _liveTimer;
+  if (lt.phase === 'idle') return;
+  try {
+    db.ref(`matches/${matchId}/liveTimer`).set({
+      phase: lt.phase,
+      roundIdx: lt.roundIdx,
+      numRounds: lt.numRounds,
+      phaseEndAt: lt.phaseEndAt,
+      roundSecs: lt.roundSecs,
+      breakSecs: lt.breakSecs,
+      alerted: lt.alerted || false,
+      warned2m: lt.warned2m || false,
+      savedAt: Date.now()
+    });
+  } catch(e) {}
+}
+
+function _startLiveTimerPersist() {
+  if (_liveTimerSaveInterval) clearInterval(_liveTimerSaveInterval);
+  _liveTimerSaveInterval = setInterval(_saveLiveTimerState, 5000);
+}
+
+function _stopLiveTimerPersist() {
+  if (_liveTimerSaveInterval) { clearInterval(_liveTimerSaveInterval); _liveTimerSaveInterval = null; }
+}
+
 async function _requestWakeLock() {
   try {
     if ('wakeLock' in navigator) {
@@ -2819,12 +2865,17 @@ let _liveTimer = {
 function speak(text) {
   try {
     if (!window.speechSynthesis) return;
+    // iOS quirk: cancel any pending utterance first, then brief delay before speaking
+    window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'ko-KR';
-    u.rate = 0.9;
+    u.rate = 0.85;
+    u.pitch = 1.0;
     u.volume = 1.0;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(u);
+    // iOS sometimes needs a short pause after cancel()
+    setTimeout(() => {
+      try { window.speechSynthesis.speak(u); } catch(e) {}
+    }, 80);
   } catch(e) {}
 }
 
@@ -2916,6 +2967,29 @@ function _timerFmt(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+// 마지막 라운드 종료 예상 시각 계산
+function _calcEstimatedEnd() {
+  const { phase, roundIdx, numRounds, phaseEndAt, roundSecs, breakSecs } = _liveTimer;
+  if (!phaseEndAt || phase === 'idle' || phase === 'done') return null;
+  let extraMs;
+  if (phase === 'playing') {
+    // 현재 라운드 종료 후: 남은 라운드마다 (쉬는시간 + 라운드)
+    const moreRounds = numRounds - roundIdx - 1;
+    extraMs = moreRounds * (breakSecs + roundSecs) * 1000;
+  } else { // break
+    // 쉬는시간 종료 후: 남은 라운드 + 그 사이 쉬는시간
+    const moreRounds = numRounds - roundIdx - 1;
+    const moreBreaks = Math.max(0, moreRounds - 1);
+    extraMs = moreRounds * roundSecs * 1000 + moreBreaks * breakSecs * 1000;
+  }
+  return phaseEndAt + extraMs;
+}
+
+function _fmtEndTime(ts) {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
 function _roundDots(current, total, phase) {
   return `<div class="round-dots">${Array.from({ length: total }, (_, i) => {
     const done = i < current || (i === current && phase === 'done');
@@ -2929,6 +3003,7 @@ function _roundDots(current, total, phase) {
 function resetLiveTimer() {
   if (_liveTimer.interval) clearInterval(_liveTimer.interval);
   _stopAudioKeepAlive();
+  _stopLiveTimerPersist();
   const rs = _liveTimer.roundSecs;
   const nr = _liveTimer.numRounds;
   _liveTimer = { roundSecs: rs, breakSecs: 60, phase: 'idle', roundIdx: 0, numRounds: nr, phaseEndAt: null, interval: null, alerted: false, warned2m: false };
@@ -2948,6 +3023,7 @@ function updateTimerDisplay() {
       _liveTimer.alerted = true;
       const isLast = roundIdx + 1 >= numRounds;
       playAlarm(isLast ? `RD ${roundIdx + 1} 종료 · 전체 완료!` : `RD ${roundIdx + 1} 종료 · 쉬는시간`);
+      _saveLiveTimerState();
     }
     if (roundIdx + 1 < numRounds) {
       _liveTimer.phase = 'break';
@@ -3001,13 +3077,38 @@ function updateTimerDisplay() {
   // ── PLAYING
   } else if (phase === 'playing') {
     const rem = Math.max(0, phaseEndAt - now);
-    // 2분 남은 시점 음성 알림
+    // 2분 남은 시점 — 비프음 + 음성 알림
     if (!_liveTimer.warned2m && rem <= 120000 && rem > 115000) {
       _liveTimer.warned2m = true;
-      speak('2분 남았습니다');
+      // 짧은 알림음 먼저 → 음성이 더 잘 들림
+      try {
+        if (_audioCtx && _audioCtx.state === 'running') {
+          const t = _audioCtx.currentTime;
+          [0, 0.18].forEach(d => {
+            const osc = _audioCtx.createOscillator();
+            const g = _audioCtx.createGain();
+            osc.connect(g); g.connect(_audioCtx.destination);
+            osc.type = 'sine'; osc.frequency.value = 1047;
+            g.gain.setValueAtTime(0.9, t + d);
+            g.gain.exponentialRampToValueAtTime(0.001, t + d + 0.14);
+            osc.start(t + d); osc.stop(t + d + 0.14);
+          });
+        }
+      } catch(e) {}
+      setTimeout(() => speak('2분 남았습니다'), 450);
     }
     const pct = Math.max(0, Math.min(100, (rem / (roundSecs * 1000)) * 100));
     const danger = rem < 60000;
+    const estEnd = _calcEstimatedEnd();
+    const thisRoundEnd = phaseEndAt ? _fmtEndTime(phaseEndAt) : '';
+    const isFinalRound = (roundIdx + 1 >= numRounds);
+    const estLabel = (thisRoundEnd || estEnd) ? (() => {
+      if (isFinalRound) return `🏁 이번 라운드 종료 ${thisRoundEnd}`;
+      return [
+        thisRoundEnd ? `이번 종료 <strong>${thisRoundEnd}</strong>` : '',
+        estEnd ? `최종 <strong>${_fmtEndTime(estEnd)}</strong>` : ''
+      ].filter(Boolean).join(' · ');
+    })() : '';
     html = `
       <div class="timer-phase-label">RD ${roundIdx + 1} / ${numRounds} 진행 중 · ${timeLabel}씩</div>
       <div class="timer-countdown-row">
@@ -3018,6 +3119,7 @@ function updateTimerDisplay() {
         </div>
       </div>
       ${_roundDots(roundIdx, numRounds, 'playing')}
+      ${estLabel ? `<div class="timer-est-end">${estLabel}</div>` : ''}
       <div style="display:flex;gap:6px;align-items:center;margin-top:12px;">
         <button class="btn btn-outline" id="lv-t-rm30" style="flex:1;font-size:12px;font-weight:800;padding:10px 0;">−30초</button>
         <button class="btn btn-block" id="lv-t-end" style="flex:2;background:var(--primary);color:#fff;border-radius:10px;font-size:13px;font-weight:800;padding:12px;">⏹ 라운드 종료</button>
@@ -3031,6 +3133,16 @@ function updateTimerDisplay() {
     const pct = Math.max(0, Math.min(100, (rem / (breakSecs * 1000)) * 100));
     const nextRdNum = roundIdx + 2;
     const nextLabel = roundIdx + 1 < numRounds ? `RD ${nextRdNum} 자동 시작` : '마지막 라운드 완료';
+    const estEndB = _calcEstimatedEnd();
+    const nextRoundEndTs = phaseEndAt ? phaseEndAt + roundSecs * 1000 : null;
+    const isLastBreak = (roundIdx + 1 >= numRounds - 1);
+    const estLabelB = estEndB ? (() => {
+      if (isLastBreak && nextRoundEndTs) return `🏁 최종 종료 예상 <strong>${_fmtEndTime(nextRoundEndTs)}</strong>`;
+      return [
+        nextRoundEndTs ? `다음 종료 <strong>${_fmtEndTime(nextRoundEndTs)}</strong>` : '',
+        estEndB ? `최종 <strong>${_fmtEndTime(estEndB)}</strong>` : ''
+      ].filter(Boolean).join(' · ');
+    })() : '';
     html = `
       <div class="timer-phase-label is-break" style="font-size:13px;">⏸ 쉬는시간 · RD ${roundIdx + 1} 완료</div>
       <div class="timer-countdown-row">
@@ -3041,6 +3153,7 @@ function updateTimerDisplay() {
         </div>
       </div>
       ${_roundDots(roundIdx, numRounds, 'break')}
+      ${estLabelB ? `<div class="timer-est-end">${estLabelB}</div>` : ''}
       <button class="btn btn-outline btn-block" id="lv-t-skip-break" style="margin-top:10px;font-size:12px;font-weight:700;">▶ 쉬는시간 건너뛰기 (즉시 다음 라운드)</button>`;
 
   // ── DONE
@@ -3087,6 +3200,7 @@ function updateTimerDisplay() {
     _liveTimer.warned2m = false;
     if (!_liveTimer.interval) _liveTimer.interval = setInterval(updateTimerDisplay, 400);
     updateTimerDisplay();
+    _saveLiveTimerState(); _startLiveTimerPersist();
   };
   const onEnd = $('#lv-t-end');
   if (onEnd) onEnd.onclick = () => {
@@ -3104,6 +3218,7 @@ function updateTimerDisplay() {
       _liveTimer.phaseEndAt = Date.now() + _liveTimer.breakSecs * 1000;
       _liveTimer.alerted = false;
     }
+    _saveLiveTimerState();
     updateTimerDisplay();
   };
   // 쉬는시간 건너뛰기
@@ -3116,6 +3231,7 @@ function updateTimerDisplay() {
     _liveTimer.alerted = false;
     _liveTimer.warned2m = false;
     updateTimerDisplay();
+    _saveLiveTimerState();
   };
   const onReset = $('#lv-t-reset');
   if (onReset) onReset.onclick = () => { _unlockAudio(); resetLiveTimer(); };
@@ -3827,14 +3943,32 @@ function renderLivePage() {
 
   // ── 타이머 라운드 수 동기화 (매치 라운드 수에 맞게)
   const numRounds = (m.rounds || []).length;
-  if (_liveTimer.phase === 'idle') _liveTimer.numRounds = numRounds;
+
+  // ── Firebase에서 저장된 타이머 상태 복원 (창 재오픈 시 이어서 진행)
+  const saved = m.liveTimer;
+  if (saved && saved.phase && saved.phase !== 'idle' && _liveTimer.phase === 'idle') {
+    // 저장된 상태 복원: phaseEndAt이 절대 timestamp이므로 시간은 자동으로 흐름
+    _liveTimer.phase    = saved.phase;
+    _liveTimer.roundIdx = saved.roundIdx || 0;
+    _liveTimer.numRounds= saved.numRounds || numRounds;
+    _liveTimer.phaseEndAt = saved.phaseEndAt || null;
+    _liveTimer.roundSecs  = saved.roundSecs || _liveTimer.roundSecs;
+    _liveTimer.breakSecs  = saved.breakSecs || 60;
+    _liveTimer.alerted    = saved.alerted || false;
+    _liveTimer.warned2m   = saved.warned2m || false;
+  } else if (_liveTimer.phase === 'idle') {
+    _liveTimer.numRounds = numRounds;
+  }
+
   const metaEl = $('#lv-timer-meta');
-  if (metaEl) metaEl.textContent = `${numRounds}라운드 · 쉬는시간 1분`;
+  if (metaEl) metaEl.textContent = `${_liveTimer.numRounds}라운드 · 쉬는시간 1분`;
 
   // ── 타이머 디스플레이 유지 (re-render 후에도 상태 유지)
   updateTimerDisplay();
   if (_liveTimer.phase !== 'idle' && _liveTimer.phase !== 'done' && !_liveTimer.interval) {
     _liveTimer.interval = setInterval(updateTimerDisplay, 400);
+    _startLiveTimerPersist();
+    _startAudioKeepAlive();
   }
 
   $('#round-list-live').innerHTML = (m.rounds || []).map(r => roundCardHtml(r)).join('');
