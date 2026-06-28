@@ -1869,6 +1869,12 @@ function escapeHtml(s) {
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+function abbrevQLabel(label) {
+  if (!label) return label;
+  const m = String(label).match(/^(\d{4})년\s*(\d)분기$/);
+  if (m) return `${m[1].slice(2)}년 ${m[2]}Q`;
+  return label;
+}
 function fmtDate(iso) {
   if (!iso) return '';
   const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -2044,7 +2050,7 @@ function renderHomePage() {
       <div class="hqb-chips">
         <button class="hqb-chip${sq === 'all' ? ' active' : ''}" data-q="all">전체</button>
         ${unassignedCount > 0 ? `<button class="hqb-chip${sq === 'current' ? ' active' : ''}" data-q="current">현재</button>` : ''}
-        ${qEntries.map(([qId, q]) => `<button class="hqb-chip${sq === qId ? ' active' : ''}" data-q="${qId}">${q.label || qId}</button>`).join('')}
+        ${qEntries.map(([qId, q]) => `<button class="hqb-chip${sq === qId ? ' active' : ''}" data-q="${qId}">${abbrevQLabel(q.label) || qId}</button>`).join('')}
       </div>
     </div>
   ` : '';
@@ -4448,7 +4454,7 @@ function renderRecordsPage() {
   const archQ = state.archiveQ || (qEntries[0] ? qEntries[0][0] : null);
   const archMatches = archQ === 'all' ? archived
     : archived.filter(m => m.quarter === archQ);
-  const archLabel = archQ === 'all' ? '전체 누적' : (quarters[archQ]?.label || archQ);
+  const archLabel = archQ === 'all' ? '전체 누적' : (abbrevQLabel(quarters[archQ]?.label) || archQ);
 
   root.innerHTML = `
     <div class="page-header">
@@ -4473,13 +4479,13 @@ function renderRecordsPage() {
     ${hasQuarters ? `
     <div class="card rec-collapse-card">
       <button class="rec-toggle-row" id="rec-archive-toggle">
-        <span class="rec-toggle-label">이전 분기 기록</span>
+        <span class="rec-toggle-label">이전 파워 랭킹</span>
         <span class="rec-toggle-chevron${state.archiveExpanded ? ' open' : ''}">›</span>
       </button>
       <div id="rec-archive-body" style="display:${state.archiveExpanded ? 'block' : 'none'}">
         <div class="arch-q-pills">
           <button class="arch-q-pill${archQ === 'all' ? ' active' : ''}" data-aq="all">전체 누적</button>
-          ${qEntries.map(([qId, q]) => `<button class="arch-q-pill${archQ === qId ? ' active' : ''}" data-aq="${qId}">${q.label || qId}</button>`).join('')}
+          ${qEntries.map(([qId, q]) => `<button class="arch-q-pill${archQ === qId ? ' active' : ''}" data-aq="${qId}">${abbrevQLabel(q.label) || qId}</button>`).join('')}
         </div>
         <div style="margin-top:14px;">
           <div class="arch-q-label-row"><span class="q-current-badge" style="background:var(--surface-3);color:var(--text-2);">${archLabel}</span></div>
@@ -4633,7 +4639,7 @@ function renderHistoryList(archived) {
   const root = $('#rec-history');
   if (!root) return;
   const quarters = state.quarters || {};
-  const sorted = [...archived].sort((a, b) => (b.date || '') > (a.date || '') ? 1 : -1).reverse();
+  const sorted = [...archived].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   if (!sorted.length) {
     root.innerHTML = `<div class="empty" style="padding:16px 0;font-size:12px;">아직 종료된 경기가 없어요</div>`;
@@ -4649,17 +4655,15 @@ function renderHistoryList(archived) {
       return { rank: idx + 1, ti: s.id - 1, names: members, pts: s.p, w: s.w, d: s.d, l: s.l };
     });
     const winner = ranks[0];
-    const previewNames = winner ? (winner.names.slice(0, 2).join(' · ') + (winner.names.length > 2 ? ` 외 ${winner.names.length - 2}` : '')) : '';
-    const rCount = (m.rounds || []).filter(r => r.winner).length;
+    const previewNames = winner ? winner.names.join(' · ') : '';
     const isExpanded = !!state.expandedMatches[m.id];
-    const qBadge = m.quarter && quarters[m.quarter] ? `<span class="mh-q-tag">${quarters[m.quarter].label}</span>` : '';
+    const qBadge = m.quarter && quarters[m.quarter] ? `<span class="mh-q-tag">${abbrevQLabel(quarters[m.quarter].label)}</span>` : '';
 
     return `<div class="mh-item${isExpanded ? ' open' : ''}" data-mhid="${m.id}">
       <div class="mh-row" data-toggle="${m.id}">
         <span class="mh-date">${fmtDate(m.date)}</span>
         <span class="mh-preview">🥇 ${escapeHtml(previewNames)}</span>
         ${qBadge}
-        <span class="mh-meta">${rCount}R</span>
         <span class="mh-chevron">›</span>
       </div>
       <div class="mh-body" style="display:${isExpanded ? 'block' : 'none'}">
