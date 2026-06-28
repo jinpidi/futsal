@@ -455,6 +455,70 @@
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     border-radius: 6px; padding: 1px 6px; flex-shrink: 0;
   }
+
+  /* ── records collapse cards */
+  .rec-card-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .rec-collapse-card { padding: 0 !important; overflow: hidden; }
+  .rec-toggle-row {
+    width: 100%; display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; cursor: pointer; background: none; border: none;
+    text-align: left;
+  }
+  .rec-toggle-label { font-size: 13px; font-weight: 800; color: var(--text-2); }
+  .rec-toggle-chevron {
+    font-size: 18px; color: var(--text-3); font-weight: 300;
+    transform: rotate(90deg); transition: transform .2s; display: inline-block;
+  }
+  .rec-toggle-chevron.open { transform: rotate(270deg); }
+  #rec-archive-body, #rec-history, #pm-past-list { padding: 0 16px 16px; }
+  #rec-history { padding-top: 0; }
+
+  /* ── archive quarter pills */
+  .arch-q-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .arch-q-pill {
+    padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 700;
+    border: 1.5px solid var(--border-2); background: var(--surface); color: var(--text-2);
+    cursor: pointer; transition: all .15s;
+  }
+  .arch-q-pill.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .arch-q-label-row { margin-bottom: 10px; }
+
+  /* ── current quarter badge */
+  .q-current-badge {
+    display: inline-flex; align-items: center;
+    background: var(--accent); color: #fff;
+    font-size: 10px; font-weight: 800; border-radius: 8px; padding: 2px 8px;
+  }
+
+  /* ── match history items (new design) */
+  .mh-item { border-bottom: 1px solid var(--border); }
+  .mh-item:last-child { border-bottom: none; }
+  .mh-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 0; cursor: pointer; user-select: none;
+  }
+  .mh-row:hover { opacity: 0.75; }
+  .mh-date { font-size: 11.5px; font-weight: 800; color: var(--text-3); flex-shrink: 0; min-width: 44px; }
+  .mh-preview { font-size: 12.5px; font-weight: 700; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mh-meta { font-size: 11px; font-weight: 700; color: var(--text-3); flex-shrink: 0; }
+  .mh-q-tag { font-size: 9.5px; font-weight: 800; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 6px; padding: 1px 5px; flex-shrink: 0; }
+  .mh-chevron { font-size: 16px; color: var(--text-3); transition: transform .2s; flex-shrink: 0; }
+  .mh-item.open .mh-chevron { transform: rotate(90deg); }
+  .mh-body { padding: 4px 0 14px; }
+  .mh-body-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .mh-body-date { font-size: 13px; font-weight: 800; color: var(--text); }
+  .mh-team-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 0; border-bottom: 1px solid var(--border);
+  }
+  .mh-team-row:last-of-type { border-bottom: none; }
+  .mh-medal { font-size: 16px; flex-shrink: 0; width: 22px; }
+  .mh-names { font-size: 12px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mh-rec { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
+  .mh-pts { font-size: 13px; font-weight: 900; color: var(--accent); flex-shrink: 0; min-width: 36px; text-align: right; }
   .home-stat + .home-stat { border-left: 1px solid var(--border); }
 
   /* ============ MATCH LIST ============ */
@@ -1778,7 +1842,12 @@ let state = {
   currentMatchId: null,
   voterId: null,
   voterPinVerified: false,
-  selectedQuarter: 'all',
+  selectedQuarter: 'current',
+  archiveExpanded: false,
+  archiveQ: null,
+  historyExpanded: false,
+  pmPastExpanded: false,
+  expandedMatches: {},
   adminSort: localStorage.getItem('admin_sort') || 'name',
   adminPosFilter: localStorage.getItem('admin_pos_filter') || 'all',
   unsubscribePlayers: null,
@@ -2093,21 +2162,14 @@ function renderPreMatchPage() {
   // active = not finished; apply quarter filter only to finished matches
   const activeMatches = allMatches.filter(m => m.status !== 'finished');
   const finishedMatches = allMatches.filter(m => m.status === 'finished');
-  const filteredFinished = sq === 'all' ? finishedMatches
-    : sq === 'current' ? finishedMatches.filter(m => !m.quarter)
-    : finishedMatches.filter(m => m.quarter === sq);
-
-  const matches = [...activeMatches, ...filteredFinished];
-
-  const qLabel = sq === 'all' ? null
-    : sq === 'current' ? '현재 분기'
-    : (quarters[sq]?.label || sq);
+  const currentFinished = finishedMatches.filter(m => !m.quarter);
+  const pastFinished = finishedMatches.filter(m => !!m.quarter);
 
   root.innerHTML = `
     <div class="page-header">
       <div class="page-header-left">
         <h2 class="page-title">경기 목록</h2>
-        <div class="page-subtitle">${qLabel ? `<span class="pm-q-badge">${qLabel}</span>` : '모집 · 출석 투표 · 팀 편성'}</div>
+        <div class="page-subtitle">모집 · 출석 투표 · 팀 편성</div>
       </div>
       <div class="page-header-right">
         <button class="icon-btn" id="pm-home" title="홈">${svgRaw('home')}</button>
@@ -2115,34 +2177,39 @@ function renderPreMatchPage() {
       </div>
     </div>
     <div id="match-list-box"></div>
+    ${(hasQuarters && pastFinished.length) ? `
+    <div class="card rec-collapse-card" style="margin-top:8px;">
+      <button class="rec-toggle-row" id="pm-past-toggle">
+        <span class="rec-toggle-label">이전 경기</span>
+        <span class="rec-toggle-chevron${state.pmPastExpanded ? ' open' : ''}">›</span>
+      </button>
+      <div id="pm-past-list" style="display:${state.pmPastExpanded ? 'block' : 'none'};margin-top:4px;"></div>
+    </div>` : ''}
   `;
 
   $('#pm-home').onclick = () => navigate('home');
   $('#btn-new-match').onclick = openNewMatchModal;
 
-  const box = $('#match-list-box');
-  if (!matches.length) {
-    box.innerHTML = `<div class="card"><div class="empty"><div class="empty-icon">${svgRaw('calendar')}</div>${sq !== 'all' ? `${qLabel} 경기 기록이 없어요.` : '예정된 경기가 없어요.<br>오른쪽 위에서 새 경기를 만들어보세요.'}</div></div>`;
-    return;
-  }
-
-  box.innerHTML = matches.map(m => {
-    const votes = m.votes || {};
-    const voteCount = Object.values(votes).filter(v => v.status === 'attend').length;
-    const finished = m.status === 'finished';
-    const attCount = (finished && m.teams && !voteCount)
-      ? (m.teams || []).reduce((a, t) => a + (t.members || []).length, 0)
-      : voteCount;
-    const max = m.maxPlayers || 15;
-    const pct = Math.min(100, (attCount / max) * 100);
-    const past = isPastDate(m.date);
-    const klass = (past || finished) ? ' is-past' : '';
-    const finishedKlass = finished ? ' is-finished' : '';
-    const statusBadge = finished ? '<span class="badge b-finished">종료</span>' : (past ? '<span class="badge b-past">날짜 지남</span>' : renderStatusBadge(m));
-    const qBadge = finished && hasQuarters && sq === 'all' && m.quarter
-      ? `<span class="pm-match-q-tag">${quarters[m.quarter]?.label || m.quarter}</span>` : '';
-    return `
-      <div class="match-list-card${klass}${finishedKlass}" data-id="${m.id}">
+  function renderMatchCards(matches, container) {
+    if (!matches.length) {
+      container.innerHTML = `<div class="empty" style="padding:16px 0;font-size:12px;">경기 기록이 없어요</div>`;
+      return;
+    }
+    container.innerHTML = matches.map(m => {
+      const votes = m.votes || {};
+      const voteCount = Object.values(votes).filter(v => v.status === 'attend').length;
+      const finished = m.status === 'finished';
+      const attCount = (finished && m.teams && !voteCount)
+        ? (m.teams || []).reduce((a, t) => a + (t.members || []).length, 0) : voteCount;
+      const max = m.maxPlayers || 15;
+      const pct = Math.min(100, (attCount / max) * 100);
+      const past = isPastDate(m.date);
+      const klass = (past || finished) ? ' is-past' : '';
+      const finishedKlass = finished ? ' is-finished' : '';
+      const statusBadge = finished ? '<span class="badge b-finished">종료</span>' : (past ? '<span class="badge b-past">날짜 지남</span>' : renderStatusBadge(m));
+      const qBadge = finished && m.quarter && quarters[m.quarter]
+        ? `<span class="pm-match-q-tag">${quarters[m.quarter].label}</span>` : '';
+      return `<div class="match-list-card${klass}${finishedKlass}" data-id="${m.id}">
         <div class="match-list-head">
           <span class="match-title">${svgRaw('calendar')} ${fmtDate(m.date)}</span>
           <span style="display:flex;align-items:center;gap:4px;">${qBadge}${statusBadge}</span>
@@ -2152,13 +2219,29 @@ function renderPreMatchPage() {
           ${!finished ? `<span class="mlm-item">${svgRaw('clock')}${fmtDateTime(m.deadline)} 마감</span>` : ''}
         </div>
         ${!finished ? `<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>` : ''}
-      </div>
-    `;
-  }).join('');
-  box.addEventListener('click', (e) => {
-    const card = e.target.closest('.match-list-card');
-    if (card) openMatchDetail(card.dataset.id);
-  });
+      </div>`;
+    }).join('');
+    container.addEventListener('click', (e) => {
+      const card = e.target.closest('.match-list-card');
+      if (card) openMatchDetail(card.dataset.id);
+    });
+  }
+
+  const box = $('#match-list-box');
+  const currentList = [...activeMatches, ...currentFinished];
+  if (!currentList.length) {
+    box.innerHTML = `<div class="card"><div class="empty"><div class="empty-icon">${svgRaw('calendar')}</div>예정된 경기가 없어요.<br>오른쪽 위에서 새 경기를 만들어보세요.</div></div>`;
+  } else {
+    renderMatchCards(currentList, box);
+  }
+
+  const pastToggle = $('#pm-past-toggle');
+  if (pastToggle) {
+    pastToggle.onclick = () => { state.pmPastExpanded = !state.pmPastExpanded; renderPreMatchPage(); };
+    if (state.pmPastExpanded) {
+      renderMatchCards(pastFinished, $('#pm-past-list'));
+    }
+  }
 }
 
 function renderStatusBadge(m) {
@@ -4354,36 +4437,18 @@ function renderRecordsPage() {
   const root = $('#page-records');
   if (!root) return;
   const archived = Object.values(state.matches || {}).filter(m => m.status === 'finished');
-
-  // build quarter tab data
   const quarters = state.quarters || {};
   const qEntries = Object.entries(quarters).sort((a, b) => (b[1].closedAt || 0) - (a[1].closedAt || 0));
   const hasQuarters = qEntries.length > 0;
-  const unassignedCount = archived.filter(m => !m.quarter).length;
 
-  // filter matches by selected quarter
-  let displayMatches;
-  if (state.selectedQuarter === 'all') {
-    displayMatches = archived;
-  } else if (state.selectedQuarter === 'current') {
-    displayMatches = archived.filter(m => !m.quarter);
-  } else {
-    displayMatches = archived.filter(m => m.quarter === state.selectedQuarter);
-  }
+  // current quarter = unassigned finished matches
+  const currentMatches = archived.filter(m => !m.quarter);
 
-  const quarterTabsHtml = hasQuarters ? `
-    <div class="quarter-tabs-wrap">
-      <div class="seg-group quarter-seg-group" id="rec-quarter-tabs">
-        <button class="seg${state.selectedQuarter === 'all' ? ' active' : ''}" data-q="all">전체</button>
-        ${unassignedCount > 0 ? `<button class="seg${state.selectedQuarter === 'current' ? ' active' : ''}" data-q="current">현재<span class="q-tab-cnt">${unassignedCount}</span></button>` : ''}
-        ${qEntries.map(([qId, q]) => `<button class="seg${state.selectedQuarter === qId ? ' active' : ''}" data-q="${qId}">${q.label || qId}<span class="q-tab-cnt">${q.matchCount || ''}</span></button>`).join('')}
-      </div>
-    </div>
-  ` : '';
-
-  const selectedLabel = state.selectedQuarter === 'all' ? '전체' :
-    state.selectedQuarter === 'current' ? '현재' :
-    (quarters[state.selectedQuarter]?.label || state.selectedQuarter);
+  // archive selected quarter
+  const archQ = state.archiveQ || (qEntries[0] ? qEntries[0][0] : null);
+  const archMatches = archQ === 'all' ? archived
+    : archived.filter(m => m.quarter === archQ);
+  const archLabel = archQ === 'all' ? '전체 누적' : (quarters[archQ]?.label || archQ);
 
   root.innerHTML = `
     <div class="page-header">
@@ -4393,30 +4458,48 @@ function renderRecordsPage() {
         <button class="btn btn-outline btn-sm" id="rec-add-manual">+ 누락 기록</button>
       </div>
     </div>
+
     <div class="card">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-        <span class="section-title" style="margin:0;">파워 랭킹</span>
-        ${hasQuarters ? `<span class="q-selected-badge">${selectedLabel}</span>` : ''}
+      <div class="rec-card-header">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="section-title" style="margin:0;">파워 랭킹</span>
+          <span class="q-current-badge">현재 분기</span>
+        </div>
         <button class="lb-info-btn" id="rec-rank-info" title="순위 산정 기준">?</button>
       </div>
-      ${quarterTabsHtml}
       <div id="rec-leaderboard"></div>
     </div>
-    <div class="card">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-        <span class="section-title" style="margin:0;">경기 기록</span>
-        ${hasQuarters ? `<span class="q-selected-badge">${selectedLabel}</span>` : ''}
+
+    ${hasQuarters ? `
+    <div class="card rec-collapse-card">
+      <button class="rec-toggle-row" id="rec-archive-toggle">
+        <span class="rec-toggle-label">이전 분기 기록</span>
+        <span class="rec-toggle-chevron${state.archiveExpanded ? ' open' : ''}">›</span>
+      </button>
+      <div id="rec-archive-body" style="display:${state.archiveExpanded ? 'block' : 'none'}">
+        <div class="arch-q-pills">
+          <button class="arch-q-pill${archQ === 'all' ? ' active' : ''}" data-aq="all">전체 누적</button>
+          ${qEntries.map(([qId, q]) => `<button class="arch-q-pill${archQ === qId ? ' active' : ''}" data-aq="${qId}">${q.label || qId}</button>`).join('')}
+        </div>
+        <div style="margin-top:14px;">
+          <div class="arch-q-label-row"><span class="q-current-badge" style="background:var(--surface-3);color:var(--text-2);">${archLabel}</span></div>
+          <div id="rec-archive-leaderboard"></div>
+        </div>
       </div>
-      <div id="rec-history"></div>
+    </div>
+    ` : ''}
+
+    <div class="card rec-collapse-card">
+      <button class="rec-toggle-row" id="rec-history-toggle">
+        <span class="rec-toggle-label">경기 기록</span>
+        <span class="rec-toggle-chevron${state.historyExpanded ? ' open' : ''}">›</span>
+      </button>
+      <div id="rec-history" style="display:${state.historyExpanded ? 'block' : 'none'};margin-top:4px;"></div>
     </div>
   `;
+
   $('#rec-home').onclick = () => navigate('home');
   $('#rec-add-manual').onclick = openManualMatchModal;
-
-  // quarter tab click handlers
-  $$('#rec-quarter-tabs .seg').forEach(btn => {
-    btn.onclick = () => { state.selectedQuarter = btn.dataset.q; renderRecordsPage(); };
-  });
 
   $('#rec-rank-info').onclick = () => showModal(`
     <div style="text-align:center;margin-bottom:16px;">
@@ -4425,27 +4508,41 @@ function renderRecordsPage() {
       <p style="font-size:12px;color:var(--text-2);margin:0;">동점인 경우 같은 순위로 표시됩니다</p>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px;">
-      ${[
-        ['1순위', '승점 (P)', '이긴 경기 ×3, 무승부 ×1, 패배 ×0 누적'],
-        ['2순위', '1위 팀 횟수 (🏆)', '경기에서 최다 승점을 획득한 팀에 속한 횟수'],
-        ['3순위', '승률 (%)', '전체 경기 중 이긴 비율'],
-      ].map(([step, label, desc]) => `
+      ${[['1순위','승점 (P)','이긴 경기 ×3, 무승부 ×1, 패배 ×0 누적'],['2순위','1위 팀 횟수 (🏆)','경기에서 최다 승점을 획득한 팀에 속한 횟수'],['3순위','승률 (%)','전체 경기 중 이긴 비율']].map(([step,label,desc]) => `
         <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;background:var(--surface-2);border-radius:10px;border:1px solid var(--border);">
           <span style="flex-shrink:0;font-size:9px;font-weight:900;background:var(--accent);color:#fff;padding:2px 6px;border-radius:5px;margin-top:1px;">${step}</span>
-          <div>
-            <div style="font-size:12.5px;font-weight:800;color:var(--text);margin-bottom:2px;">${label}</div>
-            <div style="font-size:11px;color:var(--text-2);line-height:1.4;">${desc}</div>
-          </div>
-        </div>
-      `).join('')}
+          <div><div style="font-size:12.5px;font-weight:800;color:var(--text);margin-bottom:2px;">${label}</div><div style="font-size:11px;color:var(--text-2);line-height:1.4;">${desc}</div></div>
+        </div>`).join('')}
     </div>
     <button class="btn btn-accent btn-block" data-modal-close>확인</button>
   `);
-  renderLeaderboard(displayMatches);
-  renderHistoryList(displayMatches);
+
+  // archive toggle
+  if (hasQuarters) {
+    $('#rec-archive-toggle').onclick = () => { state.archiveExpanded = !state.archiveExpanded; renderRecordsPage(); };
+    $$('.arch-q-pill').forEach(btn => {
+      btn.onclick = () => { state.archiveQ = btn.dataset.aq; renderRecordsPage(); };
+    });
+  }
+
+  // history toggle
+  $('#rec-history-toggle').onclick = () => { state.historyExpanded = !state.historyExpanded; renderRecordsPage(); };
+
+  // render current ranking
+  renderLeaderboard(currentMatches, '#rec-leaderboard');
+
+  // render archive ranking if open
+  if (hasQuarters && state.archiveExpanded) {
+    renderLeaderboard(archMatches, '#rec-archive-leaderboard');
+  }
+
+  // render history if open
+  if (state.historyExpanded) {
+    renderHistoryList(archived);
+  }
 }
 
-function renderLeaderboard(archived) {
+function renderLeaderboard(archived, containerId) {
   const stats = {};
   archived.forEach(m => {
     if (!m.teams || !m.rounds) return;
@@ -4490,7 +4587,8 @@ function renderLeaderboard(archived) {
     s.rank = rank;
   });
 
-  const root = $('#rec-leaderboard');
+  const root = $(containerId || '#rec-leaderboard');
+  if (!root) return;
   if (!arr.length) {
     root.innerHTML = `<div class="empty" style="padding:20px;font-size:12px;">아직 기록된 경기가 없어요</div>`;
     return;
@@ -4533,54 +4631,57 @@ function renderLeaderboard(archived) {
 
 function renderHistoryList(archived) {
   const root = $('#rec-history');
-  if (!archived.length) {
-    root.innerHTML = `<div class="empty" style="padding:20px;font-size:12px;">아직 종료된 경기가 없어요</div>`;
+  if (!root) return;
+  const quarters = state.quarters || {};
+  const sorted = [...archived].sort((a, b) => (b.date || '') > (a.date || '') ? 1 : -1).reverse();
+
+  if (!sorted.length) {
+    root.innerHTML = `<div class="empty" style="padding:16px 0;font-size:12px;">아직 종료된 경기가 없어요</div>`;
     return;
   }
-  const sorted = [...archived].sort((a, b) => (b.finishedAt || b.createdAt || 0) - (a.finishedAt || a.createdAt || 0));
+
   root.innerHTML = sorted.map(m => {
+    if (!m.teams) return '';
     const stand = computeStandings(m);
-    const isManual = String(m.id || '').startsWith('manual_');
-    const minForRating = isManual ? 1 : 5;
     const ranks = stand.map((s, idx) => {
       const team = m.teams[s.id - 1];
-      const ti = s.id - 1;
-      const members = team.members || [];
-      const teamScore = members.length >= minForRating ? calculateTeamScore(members) : null;
-      return {
-        rank: idx + 1, ti,
-        members: members.map(p => p.name).join(', '),
-        pts: s.p, w: s.w, d: s.d, l: s.l,
-        rating: teamScore !== null ? Math.round(teamScore * 10) / 10 : null
-      };
+      const members = (team?.members || []).filter(p => !isGuestPlayer(p)).map(p => p.name);
+      return { rank: idx + 1, ti: s.id - 1, names: members, pts: s.p, w: s.w, d: s.d, l: s.l };
     });
-    return `
-      <div class="history-card-r" data-mid="${m.id}">
-        <div class="h-card-head">
-          <span class="h-card-date">${svgRaw('calendar')}${fmtDate(m.date)}</span>
-          <span class="h-card-actions">
-            ${state.isAdmin ? `<button class="icon-btn" data-share-id="${m.id}" data-share-title="${escapeHtml(m.title||m.date)}" title="공유">${svgRaw('link')}</button>` : ''}
-            <button class="icon-btn" data-edit-id="${m.id}" title="수정">${svgRaw('edit')}</button>
-            <button class="icon-btn" data-del-id="${m.id}" style="color:var(--danger);" title="삭제">${svgRaw('trash')}</button>
+    const winner = ranks[0];
+    const previewNames = winner ? (winner.names.slice(0, 2).join(' · ') + (winner.names.length > 2 ? ` 외 ${winner.names.length - 2}` : '')) : '';
+    const rCount = (m.rounds || []).filter(r => r.winner).length;
+    const isExpanded = !!state.expandedMatches[m.id];
+    const qBadge = m.quarter && quarters[m.quarter] ? `<span class="mh-q-tag">${quarters[m.quarter].label}</span>` : '';
+
+    return `<div class="mh-item${isExpanded ? ' open' : ''}" data-mhid="${m.id}">
+      <div class="mh-row" data-toggle="${m.id}">
+        <span class="mh-date">${fmtDate(m.date)}</span>
+        <span class="mh-preview">🥇 ${escapeHtml(previewNames)}</span>
+        ${qBadge}
+        <span class="mh-meta">${rCount}R</span>
+        <span class="mh-chevron">›</span>
+      </div>
+      <div class="mh-body" style="display:${isExpanded ? 'block' : 'none'}">
+        <div class="mh-body-head">
+          <span class="mh-body-date">${fmtDate(m.date)}</span>
+          <span style="display:flex;gap:4px;align-items:center;">
+            ${state.isAdmin ? `<button class="icon-btn" data-share-id="${m.id}" data-share-title="${escapeHtml(m.title||m.date)}">${svgRaw('link')}</button>` : ''}
+            <button class="icon-btn" data-edit-id="${m.id}">${svgRaw('edit')}</button>
+            <button class="icon-btn" data-del-id="${m.id}" style="color:var(--danger);">${svgRaw('trash')}</button>
           </span>
         </div>
-        ${ranks.map(r => `
-          <div class="h-rank-row">
-            <span class="h-medal ${r.rank===1?'gold':r.rank===2?'silver':r.rank===3?'bronze':''}">${r.rank===1?'🥇':r.rank===2?'🥈':r.rank===3?'🥉':r.rank}</span>
-            <div class="h-info">
-              <div class="h-team-label">
-                <span class="h-team-tag ${teamColorClass(r.ti)}">${teamLabel(r.ti)}</span>
-                <span class="h-names">${escapeHtml(r.members)}</span>
-              </div>
-              <span class="h-record-line">${r.w}승 ${r.d}무 ${r.l}패</span>
-            </div>
-            <div class="h-right">
-              <span class="h-pts-num">${r.pts}<span class="pts-unit">P</span></span>
-              <span class="h-pts-label">rtg · ${r.rating != null ? Number(r.rating).toFixed(1) : '—'}</span>
-            </div>
-          </div>
-        `).join('')}
-        <div class="round-pills">
+        ${ranks.map(r => {
+          const medal = r.rank===1?'🥇':r.rank===2?'🥈':r.rank===3?'🥉':'';
+          const nameStr = r.names.length ? r.names.join(' · ') : '—';
+          return `<div class="mh-team-row">
+            <span class="mh-medal">${medal}</span>
+            <span class="mh-names">${escapeHtml(nameStr)}</span>
+            <span class="mh-rec">${r.w}승 ${r.d}무 ${r.l}패</span>
+            <span class="mh-pts">${r.pts}<span class="pts-unit">P</span></span>
+          </div>`;
+        }).join('')}
+        <div class="round-pills" style="margin-top:8px;">
           ${(m.rounds || []).map(r => {
             if (!r.winner) return `<span class="round-pill empty">·</span>`;
             if (r.winner === 'draw') return `<span class="round-pill draw">무</span>`;
@@ -4589,8 +4690,17 @@ function renderHistoryList(archived) {
           }).join('')}
         </div>
       </div>
-    `;
+    </div>`;
   }).join('');
+
+  // toggle expand
+  $$('[data-toggle]').forEach(row => {
+    row.onclick = () => {
+      const mid = row.dataset.toggle;
+      state.expandedMatches[mid] = !state.expandedMatches[mid];
+      renderHistoryList(archived);
+    };
+  });
 
   $$('[data-edit-id]').forEach(b => b.onclick = (e) => {
     e.stopPropagation();
