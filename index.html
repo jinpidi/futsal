@@ -418,6 +418,43 @@
   .home-stat { text-align: center; flex: 1; padding: 0 8px; }
   .home-stat .hs-num { font-size: 24px; font-weight: 900; color: var(--text); line-height: 1; letter-spacing: -0.02em; }
   .home-stat .hs-lbl { font-size: 9.5px; color: var(--text-3); font-weight: 700; margin-top: 5px; letter-spacing: 0.06em; text-transform: uppercase; }
+
+  /* ── home quarter bar */
+  .home-quarter-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 16px; margin-bottom: 12px;
+  }
+  .hqb-label {
+    font-size: 10px; font-weight: 800; color: var(--text-3);
+    letter-spacing: 0.07em; text-transform: uppercase; flex-shrink: 0;
+  }
+  .hqb-chips {
+    display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; padding-bottom: 2px;
+  }
+  .hqb-chips::-webkit-scrollbar { display: none; }
+  .hqb-chip {
+    flex-shrink: 0; padding: 4px 11px; border-radius: 20px;
+    font-size: 12px; font-weight: 700; cursor: pointer;
+    border: 1.5px solid var(--border-2);
+    background: var(--surface); color: var(--text-2);
+    transition: all .15s;
+  }
+  .hqb-chip.active {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+  }
+
+  /* ── prematch quarter badges */
+  .pm-q-badge {
+    display: inline-flex; align-items: center;
+    background: var(--accent); color: #fff;
+    font-size: 11px; font-weight: 800; border-radius: 8px; padding: 1px 8px;
+  }
+  .pm-match-q-tag {
+    font-size: 9.5px; font-weight: 800; color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-radius: 6px; padding: 1px 6px; flex-shrink: 0;
+  }
   .home-stat + .home-stat { border-left: 1px solid var(--border); }
 
   /* ============ MATCH LIST ============ */
@@ -1898,7 +1935,6 @@ function parseRoute() {
   return { type: 'app' };
 }
 function navigate(page) {
-  if (page === 'records') state.selectedQuarter = 'all';
   state.page = page;
   $$('.nav-btn').forEach(b => b.classList.toggle('active',
     b.dataset.page === page ||
@@ -1920,7 +1956,29 @@ function renderHomePage() {
   const playerCount = Object.keys(state.players || {}).length;
   const all = Object.values(state.matches || {});
   const recruiting = all.filter(m => computeStatus(m) === 'recruiting' || computeStatus(m) === 'closed').length;
-  const totalArchived = all.filter(m => m.status === 'finished').length;
+  const allArchived = all.filter(m => m.status === 'finished');
+  const totalArchived = allArchived.length;
+
+  const quarters = state.quarters || {};
+  const qEntries = Object.entries(quarters).sort((a, b) => (b[1].closedAt || 0) - (a[1].closedAt || 0));
+  const hasQuarters = qEntries.length > 0;
+  const unassignedCount = allArchived.filter(m => !m.quarter).length;
+
+  const sq = state.selectedQuarter || 'all';
+  const qArchivedCount = sq === 'all' ? totalArchived
+    : sq === 'current' ? unassignedCount
+    : (quarters[sq]?.matchCount || allArchived.filter(m => m.quarter === sq).length);
+
+  const quarterBarHtml = hasQuarters ? `
+    <div class="home-quarter-bar">
+      <span class="hqb-label">분기</span>
+      <div class="hqb-chips">
+        <button class="hqb-chip${sq === 'all' ? ' active' : ''}" data-q="all">전체</button>
+        ${unassignedCount > 0 ? `<button class="hqb-chip${sq === 'current' ? ' active' : ''}" data-q="current">현재</button>` : ''}
+        ${qEntries.map(([qId, q]) => `<button class="hqb-chip${sq === qId ? ' active' : ''}" data-q="${qId}">${q.label || qId}</button>`).join('')}
+      </div>
+    </div>
+  ` : '';
 
   root.innerHTML = `
     <div class="home-hero">
@@ -1928,19 +1986,21 @@ function renderHomePage() {
       <div class="h-tagline">"${escapeHtml(TAGLINE)}"</div>
     </div>
 
+    ${quarterBarHtml}
+
     <div class="home-actions">
       <div class="home-action ha-prematch" data-go="prematch">
         <span class="ha-icon">${svgRaw('plus')}</span>
         <div>
-          <div class="ha-title">새 경기 만들기</div>
-          <div class="ha-sub">매치 모집 / 출석 투표</div>
+          <div class="ha-title">경기 목록</div>
+          <div class="ha-sub">모집 · 출석 투표 · 편성</div>
         </div>
       </div>
       <div class="home-action ha-records" data-go="records">
         <span class="ha-icon">${svgRaw('trophy')}</span>
         <div>
-          <div class="ha-title">랭킹 보기</div>
-          <div class="ha-sub">파워랭킹 · 누적 기록</div>
+          <div class="ha-title">파워 랭킹</div>
+          <div class="ha-sub">${hasQuarters && sq !== 'all' ? (quarters[sq]?.label || (sq === 'current' ? '현재 분기' : sq)) : '누적 기록'}</div>
         </div>
       </div>
       <div class="home-action ha-admin" data-go="admin">
@@ -1969,11 +2029,15 @@ function renderHomePage() {
         <div class="hs-lbl">진행 매치</div>
       </div>
       <div class="home-stat">
-        <div class="hs-num">${totalArchived}</div>
-        <div class="hs-lbl">누적 경기</div>
+        <div class="hs-num">${qArchivedCount}</div>
+        <div class="hs-lbl">${hasQuarters && sq !== 'all' ? '분기 경기' : '누적 경기'}</div>
       </div>
     </div>
   `;
+
+  $$('.hqb-chip').forEach(btn => {
+    btn.onclick = () => { state.selectedQuarter = btn.dataset.q; renderHomePage(); };
+  });
 
   $$('.home-action').forEach(a => {
     a.onclick = () => {
@@ -2015,20 +2079,35 @@ function openGuideModal() {
 function renderPreMatchPage() {
   const root = $('#page-prematch');
   if (!root) return;
-  // 모든 매치 표시 (종료 포함). 날짜 desc.
-  const matches = Object.values(state.matches || {})
-    .sort((a, b) => {
-      const da = a.date || '';
-      const db_ = b.date || '';
-      if (da !== db_) return db_.localeCompare(da);
-      return (b.createdAt || 0) - (a.createdAt || 0);
-    });
+
+  const sq = state.selectedQuarter || 'all';
+  const quarters = state.quarters || {};
+  const hasQuarters = Object.keys(quarters).length > 0;
+
+  const allMatches = Object.values(state.matches || {}).sort((a, b) => {
+    const da = a.date || '', db_ = b.date || '';
+    if (da !== db_) return db_.localeCompare(da);
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
+
+  // active = not finished; apply quarter filter only to finished matches
+  const activeMatches = allMatches.filter(m => m.status !== 'finished');
+  const finishedMatches = allMatches.filter(m => m.status === 'finished');
+  const filteredFinished = sq === 'all' ? finishedMatches
+    : sq === 'current' ? finishedMatches.filter(m => !m.quarter)
+    : finishedMatches.filter(m => m.quarter === sq);
+
+  const matches = [...activeMatches, ...filteredFinished];
+
+  const qLabel = sq === 'all' ? null
+    : sq === 'current' ? '현재 분기'
+    : (quarters[sq]?.label || sq);
 
   root.innerHTML = `
     <div class="page-header">
       <div class="page-header-left">
-        <h2 class="page-title">Pre-Match</h2>
-        <div class="page-subtitle">경기 모집 · 출석 투표 · 팀 편성</div>
+        <h2 class="page-title">경기 목록</h2>
+        <div class="page-subtitle">${qLabel ? `<span class="pm-q-badge">${qLabel}</span>` : '모집 · 출석 투표 · 팀 편성'}</div>
       </div>
       <div class="page-header-right">
         <button class="icon-btn" id="pm-home" title="홈">${svgRaw('home')}</button>
@@ -2043,14 +2122,13 @@ function renderPreMatchPage() {
 
   const box = $('#match-list-box');
   if (!matches.length) {
-    box.innerHTML = `<div class="card"><div class="empty"><div class="empty-icon">${svgRaw('calendar')}</div>예정된 경기가 없어요.<br>오른쪽 위에서 새 경기를 만들어보세요.</div></div>`;
+    box.innerHTML = `<div class="card"><div class="empty"><div class="empty-icon">${svgRaw('calendar')}</div>${sq !== 'all' ? `${qLabel} 경기 기록이 없어요.` : '예정된 경기가 없어요.<br>오른쪽 위에서 새 경기를 만들어보세요.'}</div></div>`;
     return;
   }
 
   box.innerHTML = matches.map(m => {
     const votes = m.votes || {};
     const voteCount = Object.values(votes).filter(v => v.status === 'attend').length;
-    // For finished matches with teams (manual entries), count actual team members
     const finished = m.status === 'finished';
     const attCount = (finished && m.teams && !voteCount)
       ? (m.teams || []).reduce((a, t) => a + (t.members || []).length, 0)
@@ -2061,11 +2139,13 @@ function renderPreMatchPage() {
     const klass = (past || finished) ? ' is-past' : '';
     const finishedKlass = finished ? ' is-finished' : '';
     const statusBadge = finished ? '<span class="badge b-finished">종료</span>' : (past ? '<span class="badge b-past">날짜 지남</span>' : renderStatusBadge(m));
+    const qBadge = finished && hasQuarters && sq === 'all' && m.quarter
+      ? `<span class="pm-match-q-tag">${quarters[m.quarter]?.label || m.quarter}</span>` : '';
     return `
       <div class="match-list-card${klass}${finishedKlass}" data-id="${m.id}">
         <div class="match-list-head">
           <span class="match-title">${svgRaw('calendar')} ${fmtDate(m.date)}</span>
-          ${statusBadge}
+          <span style="display:flex;align-items:center;gap:4px;">${qBadge}${statusBadge}</span>
         </div>
         <div class="match-list-meta">
           <span class="mlm-item">${svgRaw('users')}<strong>${attCount}/${max}</strong></span>
