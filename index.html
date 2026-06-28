@@ -1091,6 +1091,31 @@
   }
   .lb-info-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+  /* ── quarter tabs */
+  .quarter-tabs-wrap { margin-bottom: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .quarter-seg-group { flex-wrap: nowrap; min-width: max-content; gap: 4px; }
+  .q-tab-cnt {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.08); color: inherit; border-radius: 10px;
+    font-size: 9px; font-weight: 800; padding: 0 4px; margin-left: 3px; min-width: 16px; height: 14px;
+  }
+  .seg.active .q-tab-cnt { background: rgba(255,255,255,0.3); }
+  .q-selected-badge {
+    display: inline-flex; align-items: center;
+    background: var(--accent); color: #fff;
+    font-size: 10px; font-weight: 800; border-radius: 8px;
+    padding: 1px 7px; margin-left: 2px; flex-shrink: 0;
+  }
+  /* ── quarter admin list */
+  .quarter-admin-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+  .quarter-admin-item {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 10px;
+  }
+  .qa-label { font-size: 13px; font-weight: 800; color: var(--text); }
+  .qa-meta { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+
   .history-card-r {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -1712,9 +1737,11 @@ let state = {
   teamName: DEFAULT_TEAM_NAME,
   players: {},
   matches: {},
+  quarters: {},
   currentMatchId: null,
   voterId: null,
   voterPinVerified: false,
+  selectedQuarter: 'all',
   adminSort: localStorage.getItem('admin_sort') || 'name',
   adminPosFilter: localStorage.getItem('admin_pos_filter') || 'all',
   unsubscribePlayers: null,
@@ -1839,6 +1866,7 @@ function attachConfigListener() {
   const cb = (snap) => {
     const c = snap.val() || {};
     state.teamName = c.teamName || DEFAULT_TEAM_NAME;
+    state.quarters = c.quarters || {};
     document.title = state.teamName;
     rerenderCurrent();
   };
@@ -1870,6 +1898,7 @@ function parseRoute() {
   return { type: 'app' };
 }
 function navigate(page) {
+  if (page === 'records') state.selectedQuarter = 'all';
   state.page = page;
   $$('.nav-btn').forEach(b => b.classList.toggle('active',
     b.dataset.page === page ||
@@ -4173,12 +4202,108 @@ function renderTeamSharePage() {
 }
 
 /* ===========================================================
+   QUARTER MANAGEMENT
+   =========================================================== */
+function openCloseQuarterModal() {
+  const unassigned = Object.values(state.matches || {}).filter(m => m.status === 'finished' && !m.quarter);
+  if (!unassigned.length) {
+    toast('마감할 완료 경기가 없어요', 'err');
+    return;
+  }
+  const d = new Date();
+  const q = Math.ceil((d.getMonth() + 1) / 3);
+  const suggestedId = `${d.getFullYear()}-Q${q}`;
+  const suggestedLabel = `${d.getFullYear()}년 ${q}분기`;
+  showModal(`
+    <h3 style="margin:0 0 4px;font-size:16px;font-weight:800;">분기 마감</h3>
+    <p style="font-size:12px;color:var(--text-2);margin:0 0 16px;line-height:1.6;">현재 미분류 완료 경기 <strong>${unassigned.length}개</strong>를 아래 분기로 묶어 마감합니다.<br>마감 후 새 경기 기록은 다음 분기로 집계됩니다.</p>
+    <div class="field" style="margin-bottom:10px;">
+      <label style="font-size:12px;font-weight:700;color:var(--text-2);">분기 이름</label>
+      <input class="input" id="close-q-label" value="${suggestedLabel}" placeholder="예: 2025년 2분기">
+    </div>
+    <div class="field" style="margin-bottom:18px;">
+      <label style="font-size:12px;font-weight:700;color:var(--text-2);">분기 ID (영문·숫자)</label>
+      <input class="input" id="close-q-id" value="${suggestedId}" placeholder="예: 2025-Q2">
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-outline btn-block" data-modal-close>취소</button>
+      <button class="btn btn-accent btn-block" id="close-q-confirm">마감하기</button>
+    </div>
+  `);
+  $('#close-q-confirm').onclick = async () => {
+    const qId = ($('#close-q-id').value || '').trim();
+    const qLabel = ($('#close-q-label').value || '').trim();
+    if (!qId || !qLabel) { toast('이름과 ID를 모두 입력해주세요', 'err'); return; }
+    if (state.quarters && state.quarters[qId]) { toast('이미 사용중인 분기 ID예요', 'err'); return; }
+    closeModal();
+    await _doCloseQuarter(qId, qLabel, unassigned);
+  };
+}
+async function _doCloseQuarter(qId, qLabel, unassigned) {
+  if (!db) return;
+  try {
+    const updates = {};
+    unassigned.forEach(m => { updates[`matches/${m.id}/quarter`] = qId; });
+    updates[`config/quarters/${qId}`] = { label: qLabel, closedAt: Date.now(), matchCount: unassigned.length };
+    await db.ref('/').update(updates);
+    toast(`${qLabel} 마감 완료 · ${unassigned.length}경기`, 'ok');
+  } catch(e) {
+    toast('마감 중 오류가 발생했어요', 'err');
+    console.error(e);
+  }
+}
+async function _doDeleteQuarter(qId) {
+  if (!db) return;
+  try {
+    const updates = {};
+    Object.values(state.matches || {}).forEach(m => {
+      if (m.quarter === qId) updates[`matches/${m.id}/quarter`] = null;
+    });
+    updates[`config/quarters/${qId}`] = null;
+    await db.ref('/').update(updates);
+    toast('분기 삭제 완료', 'ok');
+  } catch(e) {
+    toast('삭제 중 오류가 발생했어요', 'err');
+  }
+}
+
+/* ===========================================================
    RECORDS
    =========================================================== */
 function renderRecordsPage() {
   const root = $('#page-records');
   if (!root) return;
   const archived = Object.values(state.matches || {}).filter(m => m.status === 'finished');
+
+  // build quarter tab data
+  const quarters = state.quarters || {};
+  const qEntries = Object.entries(quarters).sort((a, b) => (b[1].closedAt || 0) - (a[1].closedAt || 0));
+  const hasQuarters = qEntries.length > 0;
+  const unassignedCount = archived.filter(m => !m.quarter).length;
+
+  // filter matches by selected quarter
+  let displayMatches;
+  if (state.selectedQuarter === 'all') {
+    displayMatches = archived;
+  } else if (state.selectedQuarter === 'current') {
+    displayMatches = archived.filter(m => !m.quarter);
+  } else {
+    displayMatches = archived.filter(m => m.quarter === state.selectedQuarter);
+  }
+
+  const quarterTabsHtml = hasQuarters ? `
+    <div class="quarter-tabs-wrap">
+      <div class="seg-group quarter-seg-group" id="rec-quarter-tabs">
+        <button class="seg${state.selectedQuarter === 'all' ? ' active' : ''}" data-q="all">전체</button>
+        ${unassignedCount > 0 ? `<button class="seg${state.selectedQuarter === 'current' ? ' active' : ''}" data-q="current">현재<span class="q-tab-cnt">${unassignedCount}</span></button>` : ''}
+        ${qEntries.map(([qId, q]) => `<button class="seg${state.selectedQuarter === qId ? ' active' : ''}" data-q="${qId}">${q.label || qId}<span class="q-tab-cnt">${q.matchCount || ''}</span></button>`).join('')}
+      </div>
+    </div>
+  ` : '';
+
+  const selectedLabel = state.selectedQuarter === 'all' ? '전체' :
+    state.selectedQuarter === 'current' ? '현재' :
+    (quarters[state.selectedQuarter]?.label || state.selectedQuarter);
 
   root.innerHTML = `
     <div class="page-header">
@@ -4191,17 +4316,28 @@ function renderRecordsPage() {
     <div class="card">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
         <span class="section-title" style="margin:0;">파워 랭킹</span>
+        ${hasQuarters ? `<span class="q-selected-badge">${selectedLabel}</span>` : ''}
         <button class="lb-info-btn" id="rec-rank-info" title="순위 산정 기준">?</button>
       </div>
+      ${quarterTabsHtml}
       <div id="rec-leaderboard"></div>
     </div>
     <div class="card">
-      <div class="section-title">경기 기록</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span class="section-title" style="margin:0;">경기 기록</span>
+        ${hasQuarters ? `<span class="q-selected-badge">${selectedLabel}</span>` : ''}
+      </div>
       <div id="rec-history"></div>
     </div>
   `;
   $('#rec-home').onclick = () => navigate('home');
   $('#rec-add-manual').onclick = openManualMatchModal;
+
+  // quarter tab click handlers
+  $$('#rec-quarter-tabs .seg').forEach(btn => {
+    btn.onclick = () => { state.selectedQuarter = btn.dataset.q; renderRecordsPage(); };
+  });
+
   $('#rec-rank-info').onclick = () => showModal(`
     <div style="text-align:center;margin-bottom:16px;">
       <div style="font-size:28px;margin-bottom:8px;">🏆</div>
@@ -4225,8 +4361,8 @@ function renderRecordsPage() {
     </div>
     <button class="btn btn-accent btn-block" data-modal-close>확인</button>
   `);
-  renderLeaderboard(archived);
-  renderHistoryList(archived);
+  renderLeaderboard(displayMatches);
+  renderHistoryList(displayMatches);
 }
 
 function renderLeaderboard(archived) {
@@ -4673,6 +4809,39 @@ function renderAdminPage() {
     </div>
 
     <div class="card admin-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div class="section-title" style="margin:0;">분기 관리</div>
+        <button class="btn btn-accent btn-sm" id="adm-close-quarter">분기 마감</button>
+      </div>
+      ${(() => {
+        const qEntries = Object.entries(state.quarters || {}).sort((a,b) => (b[1].closedAt||0)-(a[1].closedAt||0));
+        const unassignedCnt = Object.values(state.matches||{}).filter(m=>m.status==='finished'&&!m.quarter).length;
+        if (!qEntries.length) {
+          return `<div style="font-size:12px;color:var(--text-3);line-height:1.6;">아직 마감된 분기가 없어요.<br>경기 기록이 쌓이면 분기별 파워 랭킹을 관리하세요.</div>`;
+        }
+        return `<div class="quarter-admin-list">${qEntries.map(([qId, q]) => `
+          <div class="quarter-admin-item">
+            <div>
+              <div class="qa-label">${escapeHtml(q.label||qId)}</div>
+              <div class="qa-meta">${q.matchCount||0}경기 · ${fmtDate(new Date(q.closedAt||0).toISOString().slice(0,10))} 마감</div>
+            </div>
+            <button class="icon-btn qa-del-btn" data-qid="${qId}" title="삭제" style="color:var(--danger);">${svgRaw('trash')}</button>
+          </div>`).join('')}</div>`;
+      })()}
+      <div style="margin-top:8px;font-size:11.5px;color:var(--text-3);">미분류 완료 경기: ${Object.values(state.matches||{}).filter(m=>m.status==='finished'&&!m.quarter).length}개</div>
+    </div>
+
+    <div class="card admin-section">
+      <div class="section-title">데이터 백업</div>
+      <div style="font-size:11.5px;color:var(--text-2);margin-bottom:10px;line-height:1.5;">Firebase 무료 플랜은 30일 비활성 시 데이터가 삭제될 수 있습니다.<br>정기적으로 백업하거나 Blaze 플랜으로 업그레이드를 권장합니다.</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-outline btn-sm" id="adm-export" style="flex:1;">📥 전체 백업</button>
+        <button class="btn btn-outline btn-sm" id="adm-import" style="flex:1;">📤 백업 복원</button>
+      </div>
+      <input type="file" id="adm-import-file" accept=".json" style="display:none;">
+    </div>
+
+    <div class="card admin-section">
       <div class="section-title">팀 설정</div>
       <div class="field">
         <label>팀 이름 (홈 화면에 표시됩니다)</label>
@@ -4732,6 +4901,91 @@ function renderAdminPage() {
   $('#adm-home').onclick = () => navigate('home');
   $('#adm-logout').onclick = () => { state.isAdmin = false; sessionStorage.removeItem('isAdmin'); renderAdminPage(); };
   $('#adm-chpw').onclick = changeAdminPassword;
+
+  // ── 분기 관리
+  $('#adm-close-quarter').onclick = openCloseQuarterModal;
+  $$('.qa-del-btn').forEach(btn => {
+    btn.onclick = () => {
+      const qId = btn.dataset.qid;
+      const q = (state.quarters || {})[qId];
+      if (!q) return;
+      showModal(`
+        <h3 style="margin:0 0 10px;font-size:15px;font-weight:800;">분기 삭제</h3>
+        <p style="font-size:12.5px;color:var(--text-2);margin:0 0 18px;line-height:1.6;"><strong>${escapeHtml(q.label||qId)}</strong> 분기를 삭제하면<br>해당 경기들이 미분류 상태로 돌아갑니다.</p>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline btn-block" data-modal-close>취소</button>
+          <button class="btn btn-block" style="background:var(--danger);color:#fff;" id="qa-del-confirm">삭제</button>
+        </div>
+      `);
+      $('#qa-del-confirm').onclick = async () => { closeModal(); await _doDeleteQuarter(qId); };
+    };
+  });
+
+  // ── 전체 백업 내보내기
+  $('#adm-export').onclick = async () => {
+    try {
+      toast('백업 중...', 'ok');
+      const [playersSnap, matchesSnap, configSnap] = await Promise.all([
+        db.ref('players').once('value'),
+        db.ref('matches').once('value'),
+        db.ref('config').once('value'),
+      ]);
+      const backup = {
+        _version: 1,
+        _exportedAt: new Date().toISOString(),
+        players: playersSnap.val() || {},
+        matches: matchesSnap.val() || {},
+        config: configSnap.val() || {},
+      };
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const date = new Date().toISOString().slice(0, 10);
+      a.href = url; a.download = `futsal-backup-${date}.json`;
+      a.click(); URL.revokeObjectURL(url);
+      toast('백업 파일 다운로드 완료', 'ok');
+    } catch(e) { toast('백업 실패: ' + e.message, 'err'); }
+  };
+
+  // ── 백업 복원
+  $('#adm-import').onclick = () => $('#adm-import-file').click();
+  $('#adm-import-file').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!data._version || !data.players) { toast('유효하지 않은 백업 파일', 'err'); return; }
+        showModal(`
+          <h3>백업 복원</h3>
+          <div style="font-size:13px;color:var(--text-2);margin-bottom:16px;line-height:1.6;">
+            <strong>${file.name}</strong><br>
+            내보낸 시각: ${data._exportedAt ? new Date(data._exportedAt).toLocaleString('ko-KR') : '알 수 없음'}<br>
+            선수 ${Object.keys(data.players||{}).length}명 · 경기 ${Object.keys(data.matches||{}).length}건
+          </div>
+          <div style="background:var(--danger-soft);color:var(--danger);font-size:12px;font-weight:700;padding:10px 12px;border-radius:8px;margin-bottom:16px;">
+            ⚠️ 현재 DB의 모든 데이터를 백업 내용으로 덮어씁니다.
+          </div>
+          <button class="btn btn-danger btn-block" id="confirm-restore">덮어쓰고 복원</button>
+          <button class="btn btn-ghost btn-sm btn-block" data-modal-close style="margin-top:8px;">취소</button>
+        `);
+        $('#confirm-restore').onclick = async () => {
+          closeModal();
+          try {
+            toast('복원 중...', 'ok');
+            await db.ref('players').set(data.players || {});
+            await db.ref('matches').set(data.matches || {});
+            if (data.config) await db.ref('config').set(data.config);
+            toast('복원 완료! 새로고침합니다.', 'ok');
+            setTimeout(() => location.reload(), 1500);
+          } catch(e2) { toast('복원 실패: ' + e2.message, 'err'); }
+        };
+      } catch(e) { toast('파일 파싱 오류', 'err'); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
   $('#adm-add-player').onclick = () => openPlayerEdit(null);
   $$('#adm-grid .player-row').forEach(c => {
     c.onclick = () => openPlayerEdit(c.dataset.pid);
