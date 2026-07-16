@@ -3789,13 +3789,61 @@ async function saveTeamPlan(matchId, teams) {
   }
 }
 
+// 최근 N경기에서 같은 팀이었던 선수 쌍의 가중치 합 맵 반환
+// 반환: { "idA|idB": totalWeight }  (idA < idB 정렬)
+function buildTeammatePenaltyMap(recentCount = 3) {
+  const finished = Object.values(state.matches || {})
+    .filter(m => m.status === 'finished' && Array.isArray(m.teams))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, recentCount);
+
+  const map = {};
+  finished.forEach((m, matchIdx) => {
+    const weight = recentCount - matchIdx; // 최근일수록 가중치 높음
+    m.teams.forEach(team => {
+      const ids = (team.members || [])
+        .filter(p => p && p.id && !isGuestPlayer(p))
+        .map(p => p.id);
+      for (let a = 0; a < ids.length; a++) {
+        for (let b = a + 1; b < ids.length; b++) {
+          const key = [ids[a], ids[b]].sort().join('|');
+          map[key] = (map[key] || 0) + weight;
+        }
+      }
+    });
+  });
+  return map;
+}
+
+// player 두 명의 teammate 패널티 조회
+function teammatePenalty(penaltyMap, pA, pB) {
+  if (!pA?.id || !pB?.id || isGuestPlayer(pA) || isGuestPlayer(pB)) return 0;
+  return penaltyMap[[pA.id, pB.id].sort().join('|')] || 0;
+}
+
+// 팀에 p를 추가했을 때 발생하는 teammate 패널티 합
+function teamPenaltyFor(penaltyMap, team, p) {
+  return (team.members || []).reduce((sum, m) => sum + teammatePenalty(penaltyMap, m, p), 0);
+}
+
 function snakeDraft(players, teamN) {
   if (teamN < 2) teamN = 2;
+  const penaltyMap = buildTeammatePenaltyMap(3);
   const sorted = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
   const teams = Array.from({ length: teamN }, () => ({ members: [] }));
   let idx = 0, dir = 1;
   sorted.forEach(p => {
-    teams[idx].members.push(p);
+    // snake 순서에서 현재 후보 팀과 인접 팀 중 패널티가 낮은 쪽 선택
+    const candidates = [idx];
+    if (dir === 1 && idx + 1 < teamN) candidates.push(idx + 1);
+    if (dir === -1 && idx - 1 >= 0) candidates.push(idx - 1);
+    let best = idx;
+    let bestPenalty = Infinity;
+    candidates.forEach(ci => {
+      const pen = teamPenaltyFor(penaltyMap, teams[ci], p);
+      if (pen < bestPenalty) { bestPenalty = pen; best = ci; }
+    });
+    teams[best].members.push(p);
     idx += dir;
     if (idx === teamN) { dir = -1; idx = teamN - 1; }
     else if (idx < 0) { dir = 1; idx = 0; }
@@ -3803,13 +3851,14 @@ function snakeDraft(players, teamN) {
   return teams;
 }
 
-// 팀 점수 합계가 최대한 비슷하게 greedy 배분
+// 팀 점수 합계가 최대한 비슷하게 greedy 배분 + 최근 팀메이트 회피
 function balanceDraft(players, teamN) {
   if (teamN < 2) teamN = 2;
   const n = players.length;
   if (n === 0) return Array.from({ length: teamN }, () => ({ members: [] }));
 
   const sc = p => calcScore(p) || 6;
+  const penaltyMap = buildTeammatePenaltyMap(3);
 
   // 팀별 인원 수: 나머지는 팀A(index 0)에 몰아줌
   const base = Math.floor(n / teamN);
@@ -3819,14 +3868,17 @@ function balanceDraft(players, teamN) {
   const tryOnce = (arr) => {
     const teams = Array.from({ length: teamN }, (_, i) => ({ members: [], cap: caps[i], tot: 0 }));
     arr.forEach(p => {
-      // 아직 인원 여유 있는 팀 중 현재 평균이 가장 낮은 팀에 배정
       const eligible = teams.filter(t => t.members.length < t.cap);
       if (!eligible.length) return;
+      // 점수 평균이 낮은 팀에 배정하되, teammate 패널티를 가산해 비교
+      const PENALTY_WEIGHT = 0.8; // 패널티 1당 점수 환산 가중치
       let pick = eligible[0];
-      let pickAvg = pick.members.length === 0 ? -Infinity : pick.tot / pick.members.length;
+      let pickCost = (pick.members.length === 0 ? -Infinity : pick.tot / pick.members.length)
+        + teamPenaltyFor(penaltyMap, pick, p) * PENALTY_WEIGHT;
       eligible.forEach(t => {
-        const avg = t.members.length === 0 ? -Infinity : t.tot / t.members.length;
-        if (avg < pickAvg) { pickAvg = avg; pick = t; }
+        const cost = (t.members.length === 0 ? -Infinity : t.tot / t.members.length)
+          + teamPenaltyFor(penaltyMap, t, p) * PENALTY_WEIGHT;
+        if (cost < pickCost) { pickCost = cost; pick = t; }
       });
       pick.members.push(p);
       pick.tot += sc(p);
@@ -3834,22 +3886,32 @@ function balanceDraft(players, teamN) {
     return teams;
   };
 
-  const maxAvgDiff = teams => {
+  // 점수 균형 + 패널티 합계를 함께 최소화
+  const evalResult = teams => {
     const avgs = teams.filter(t => t.members.length).map(t => t.tot / t.members.length);
-    return Math.max(...avgs) - Math.min(...avgs);
+    const scoreDiff = Math.max(...avgs) - Math.min(...avgs);
+    const totalPenalty = teams.reduce((sum, t) => {
+      const ids = (t.members || []).filter(p => p.id && !isGuestPlayer(p)).map(p => p.id);
+      let pen = 0;
+      for (let a = 0; a < ids.length; a++)
+        for (let b = a + 1; b < ids.length; b++)
+          pen += penaltyMap[[ids[a], ids[b]].sort().join('|')] || 0;
+      return sum + pen;
+    }, 0);
+    return scoreDiff + totalPenalty * 0.15;
   };
 
-  let best = null, bestDiff = Infinity;
+  let best = null, bestScore = Infinity;
   const TARGET = 0.3, MAX_TRIES = 400;
 
   for (let i = 0; i < MAX_TRIES; i++) {
     const shuffled = [...players].sort(() => Math.random() - 0.5);
     const result = tryOnce(shuffled);
-    const diff = maxAvgDiff(result);
-    if (diff < bestDiff) {
-      bestDiff = diff;
+    const score = evalResult(result);
+    if (score < bestScore) {
+      bestScore = score;
       best = result;
-      if (bestDiff <= TARGET) break;
+      if (bestScore <= TARGET) break;
     }
   }
 
