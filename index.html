@@ -1141,6 +1141,25 @@
     border-radius: 10px;
     transition: background .12s;
   }
+  .lb-sort-btn {
+    margin-left: 4px;
+    font-size: 8.5px;
+    font-weight: 800;
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: 7px;
+    border: 1px solid var(--border-2);
+    background: var(--surface);
+    color: var(--text-2);
+    cursor: pointer;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .lb-sort-btn.cum {
+    background: var(--text);
+    color: var(--bg);
+    border-color: var(--text);
+  }
   .lb-cum-badge {
     flex-shrink: 0;
     margin-left: 6px;
@@ -1860,6 +1879,7 @@ let state = {
   historyExpanded: false,
   pmPastExpanded: false,
   expandedMatches: {},
+  lbSort: 'quarter',
   adminSort: localStorage.getItem('admin_sort') || 'name',
   adminPosFilter: localStorage.getItem('admin_pos_filter') || 'all',
   unsubscribePlayers: null,
@@ -4713,18 +4733,28 @@ function renderLeaderboard(archived, containerId, allArchived) {
     root.innerHTML = `<div class="empty" style="padding:20px;font-size:12px;">아직 기록된 경기가 없어요</div>`;
     return;
   }
+  // 정렬 모드: 분기순(기본) / 누적순
+  const sortByCum = showCum && state.lbSort === 'cum';
+  const displayArr = sortByCum
+    ? [...arr].sort((a, b) => {
+        const ca = cumRankMap[a.name.toLowerCase()] || 9999;
+        const cb = cumRankMap[b.name.toLowerCase()] || 9999;
+        return ca !== cb ? ca - cb : a.rank - b.rank;
+      })
+    : arr;
+
   root.innerHTML = `
     <div class="lb-ranking-wrap">
       <div class="lb-grid-row lb-grid-header">
         <span></span>
-        <span>선수${showCum ? ' · 누적' : ''}</span>
+        <span>선수${showCum ? ` <button class="lb-sort-btn${sortByCum ? ' cum' : ''}" id="lb-sort-toggle">${sortByCum ? '누적순 ⇅' : '분기순 ⇅'}</button>` : ''}</span>
         <span style="justify-content:flex-end;">전적</span>
         <span style="justify-content:flex-end;">승률</span>
         <span style="justify-content:center;font-size:9px;">🏆</span>
         <span style="justify-content:center;font-size:8px;letter-spacing:0;">경기</span>
         <span style="justify-content:flex-end;">승점</span>
       </div>
-      ${arr.map((s, i) => {
+      ${displayArr.map((s, i) => {
         const rankNum = s.rank;
         const cls = rankNum === 1 ? 'gold' : rankNum === 2 ? 'silver' : rankNum === 3 ? 'bronze' : '';
         const topCls = rankNum === 1 ? 'lb-top-1' : rankNum === 2 ? 'lb-top-2' : rankNum === 3 ? 'lb-top-3' : '';
@@ -4734,9 +4764,9 @@ function renderLeaderboard(archived, containerId, allArchived) {
         const cumRank = cumRankMap[s.name.toLowerCase()];
         const cumDiff = showCum && cumRank ? rankNum - cumRank : 0;
         const cumColor = cumDiff < 0 ? 'var(--accent)' : cumDiff > 0 ? 'var(--danger)' : 'var(--text-3)';
-        const cumArrow = cumDiff < 0 ? '▲' : cumDiff > 0 ? '▼' : '';
+        const cumArrow = cumDiff < 0 ? '▲' : cumDiff > 0 ? '▼' : '–';
         const cumBadge = showCum && cumRank
-          ? `<span class="lb-cum-badge" style="color:${cumColor};">${cumRank}위${cumArrow ? ` ${cumArrow}` : ''}</span>`
+          ? `<span class="lb-cum-badge" style="color:${cumColor};">${cumRank}위 ${cumArrow}</span>`
           : '';
         return `<div class="lb-grid-row ${topCls}">
           <span><span class="lb-rank-badge ${cls}">${rankLabel}</span></span>
@@ -4754,6 +4784,14 @@ function renderLeaderboard(archived, containerId, allArchived) {
       }).join('')}
     </div>
   `;
+
+  const sortBtn = root.querySelector('#lb-sort-toggle');
+  if (sortBtn) {
+    sortBtn.onclick = () => {
+      state.lbSort = state.lbSort === 'cum' ? 'quarter' : 'cum';
+      renderLeaderboard(archived, containerId, allArchived);
+    };
+  }
 }
 
 function renderHistoryList(archived) {
