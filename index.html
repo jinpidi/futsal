@@ -1134,12 +1134,15 @@
   .lb-ranking-wrap { display: flex; flex-direction: column; gap: 2px; }
   .lb-grid-row {
     display: grid;
-    grid-template-columns: 28px minmax(0,1fr) 52px 40px 28px 28px 42px;
-    gap: 6px;
+    grid-template-columns: 24px minmax(0,1fr) 46px 32px 22px 42px;
+    gap: 4px;
     align-items: center;
-    padding: 10px 4px;
+    padding: 8px 4px;
     border-radius: 10px;
     transition: background .12s;
+  }
+  .lb-grid-row.lb-grid-cum {
+    grid-template-columns: 24px minmax(0,1fr) 46px 32px 22px 26px 28px 38px;
   }
   .lb-grid-header {
     font-size: 9px;
@@ -1168,10 +1171,10 @@
     background: none; font-size: 22px; box-shadow: none;
   }
   .lb-name-cell { min-width: 0; display: flex; align-items: center; gap: 0; }
-  .lb-player-name { font-weight: 800; font-size: 13.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1; }
-  .lb-record-cell { font-size: 10.5px; color: var(--text-2); font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; letter-spacing: -0.01em; }
+  .lb-player-name { font-weight: 800; font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1; }
+  .lb-record-cell { font-size: 9.5px; color: var(--text-2); font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; letter-spacing: -0.02em; }
   .lb-pts-cell { display: flex; align-items: baseline; justify-content: flex-end; gap: 0; }
-  .lb-pts-main { font-weight: 900; color: var(--text); font-size: 16px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .lb-pts-main { font-weight: 900; color: var(--text); font-size: 13px; line-height: 1; font-variant-numeric: tabular-nums; }
   .lb-wr-badge {
     background: var(--accent-soft); color: var(--accent-2);
     padding: 4px 8px; border-radius: 7px;
@@ -4548,7 +4551,40 @@ function renderRecordsPage() {
   }
 }
 
-function renderLeaderboard(archived, containerId) {
+function _computeStats(matches) {
+  const stats = {};
+  matches.forEach(m => {
+    if (!m.teams || !m.rounds) return;
+    const stand = m.teams.map(() => ({ w: 0, d: 0, l: 0, p: 0 }));
+    m.rounds.forEach(r => {
+      if (!r.winner) return;
+      if (r.winner === 't1') { stand[r.t1].w++; stand[r.t1].p += 3; stand[r.t2].l++; }
+      else if (r.winner === 't2') { stand[r.t2].w++; stand[r.t2].p += 3; stand[r.t1].l++; }
+      else { stand[r.t1].d++; stand[r.t1].p++; stand[r.t2].d++; stand[r.t2].p++; }
+    });
+    const ranks = [...stand].map((s, i) => ({ ...s, ti: i })).sort((a, b) => b.p - a.p);
+    ranks.forEach((teamStat, rankIdx) => {
+      const team = m.teams[teamStat.ti];
+      (team.members || []).forEach(p => {
+        const key = (p.name || '').trim().toLowerCase();
+        if (!key || isGuestPlayer(p)) return;
+        if (!stats[key]) stats[key] = { name: (p.name || '').trim(), w: 0, d: 0, l: 0, pts: 0, top1: 0 };
+        stats[key].w += teamStat.w; stats[key].d += teamStat.d; stats[key].l += teamStat.l; stats[key].pts += teamStat.p;
+        if (rankIdx === 0 && teamStat.p > 0) stats[key].top1++;
+      });
+    });
+  });
+  const wr = s => s.w / Math.max(1, s.w + s.d + s.l);
+  const arr = Object.values(stats).sort((a, b) => b.pts !== a.pts ? b.pts - a.pts : b.top1 !== a.top1 ? b.top1 - a.top1 : wr(b) - wr(a));
+  let rank = 1;
+  arr.forEach((s, i) => {
+    if (i > 0) { const p = arr[i-1]; if (s.pts !== p.pts || s.top1 !== p.top1 || Math.abs(wr(s)-wr(p)) > 0.0001) rank = i+1; }
+    s.rank = rank;
+  });
+  return arr;
+}
+
+function renderLeaderboard(archived, containerId, allArchived) {
   const stats = {};
   archived.forEach(m => {
     if (!m.teams || !m.rounds) return;
@@ -4593,6 +4629,13 @@ function renderLeaderboard(archived, containerId) {
     s.rank = rank;
   });
 
+  // cumulative rank map: name.lower → rank number
+  const cumRankMap = {};
+  const showCum = allArchived && allArchived.length > 0;
+  if (showCum) {
+    _computeStats(allArchived).forEach(s => { cumRankMap[s.name.toLowerCase()] = s.rank; });
+  }
+
   const root = $(containerId || '#rec-leaderboard');
   if (!root) return;
   if (!arr.length) {
@@ -4601,13 +4644,13 @@ function renderLeaderboard(archived, containerId) {
   }
   root.innerHTML = `
     <div class="lb-ranking-wrap">
-      <div class="lb-grid-row lb-grid-header">
+      <div class="lb-grid-row${showCum ? ' lb-grid-cum' : ''} lb-grid-header">
         <span></span>
         <span>선수</span>
         <span style="justify-content:flex-end;">전적</span>
         <span style="justify-content:flex-end;">승률</span>
-        <span style="justify-content:center;font-size:10px;">🏆</span>
-        <span style="justify-content:center;font-size:10px;">📅</span>
+        <span style="justify-content:center;font-size:9px;">🏆</span>
+        ${showCum ? `<span style="justify-content:center;font-size:8px;letter-spacing:0;">누적</span><span style="justify-content:center;font-size:8px;letter-spacing:0;">경기</span>` : `<span style="justify-content:center;font-size:9px;">📅</span>`}
         <span style="justify-content:flex-end;">승점</span>
       </div>
       ${arr.map((s, i) => {
@@ -4617,15 +4660,22 @@ function renderLeaderboard(archived, containerId) {
         const rankLabel = rankNum === 1 ? '🥇' : rankNum === 2 ? '🥈' : rankNum === 3 ? '🥉' : rankNum;
         const total = s.w + s.d + s.l;
         const wrPct = total > 0 ? Math.round((s.w / total) * 100) : 0;
-        return `<div class="lb-grid-row ${topCls}">
+        const cumRank = cumRankMap[s.name.toLowerCase()];
+        const cumDiff = showCum && cumRank ? rankNum - cumRank : 0;
+        const cumColor = cumDiff < 0 ? 'var(--accent)' : cumDiff > 0 ? 'var(--danger)' : 'var(--text-3)';
+        return `<div class="lb-grid-row${showCum ? ' lb-grid-cum' : ''} ${topCls}">
           <span><span class="lb-rank-badge ${cls}">${rankLabel}</span></span>
           <div class="lb-name-cell">
             <span class="lb-player-name">${escapeHtml(s.name)}</span>
           </div>
           <span class="lb-record-cell">${s.w}승 ${s.d}무 ${s.l}패</span>
           <span class="lb-record-cell">${wrPct}%</span>
-          <span style="text-align:center;font-size:12px;font-weight:900;color:${s.top1 ? 'var(--accent-2)' : 'var(--text-3)'};">${s.top1 || '—'}</span>
-          <span style="text-align:center;font-size:12px;font-weight:900;color:var(--text-2);">${s.days || '—'}</span>
+          <span style="text-align:center;font-size:11px;font-weight:900;color:${s.top1 ? 'var(--accent-2)' : 'var(--text-3)'};">${s.top1 || '—'}</span>
+          ${showCum
+            ? `<span style="text-align:center;font-size:10px;font-weight:800;color:${cumColor};">${cumRank ? `${cumRank}위` : '—'}</span>
+               <span style="text-align:center;font-size:10px;font-weight:800;color:var(--text-2);">${s.days || '—'}</span>`
+            : `<span style="text-align:center;font-size:10px;font-weight:800;color:var(--text-2);">${s.days || '—'}</span>`
+          }
           <div class="lb-pts-cell">
             <span class="lb-pts-main">${s.pts}<span class="pts-unit">P</span></span>
           </div>
