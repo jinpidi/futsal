@@ -1134,15 +1134,24 @@
   .lb-ranking-wrap { display: flex; flex-direction: column; gap: 2px; }
   .lb-grid-row {
     display: grid;
-    grid-template-columns: 24px minmax(0,1fr) 46px 30px 20px 24px 38px;
-    gap: 3px;
+    grid-template-columns: 26px minmax(0,1fr) 54px 34px 22px 26px 40px;
+    gap: 4px;
     align-items: center;
-    padding: 8px 2px;
+    padding: 9px 2px;
     border-radius: 10px;
     transition: background .12s;
   }
-  .lb-grid-row.lb-grid-cum {
-    grid-template-columns: 24px minmax(0,1fr) 44px 28px 18px 22px 22px 34px;
+  .lb-cum-badge {
+    flex-shrink: 0;
+    margin-left: 6px;
+    font-size: 9px;
+    font-weight: 800;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 7px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    white-space: nowrap;
   }
   .lb-grid-header {
     font-size: 9px;
@@ -4706,13 +4715,13 @@ function renderLeaderboard(archived, containerId, allArchived) {
   }
   root.innerHTML = `
     <div class="lb-ranking-wrap">
-      <div class="lb-grid-row${showCum ? ' lb-grid-cum' : ''} lb-grid-header">
+      <div class="lb-grid-row lb-grid-header">
         <span></span>
-        <span>선수</span>
+        <span>선수${showCum ? ' · 누적' : ''}</span>
         <span style="justify-content:flex-end;">전적</span>
         <span style="justify-content:flex-end;">승률</span>
         <span style="justify-content:center;font-size:9px;">🏆</span>
-        ${showCum ? `<span style="justify-content:center;font-size:8px;letter-spacing:0;">누적</span><span style="justify-content:center;font-size:8px;letter-spacing:0;">경기</span>` : `<span style="justify-content:center;font-size:9px;">📅</span>`}
+        <span style="justify-content:center;font-size:8px;letter-spacing:0;">경기</span>
         <span style="justify-content:flex-end;">승점</span>
       </div>
       ${arr.map((s, i) => {
@@ -4725,19 +4734,19 @@ function renderLeaderboard(archived, containerId, allArchived) {
         const cumRank = cumRankMap[s.name.toLowerCase()];
         const cumDiff = showCum && cumRank ? rankNum - cumRank : 0;
         const cumColor = cumDiff < 0 ? 'var(--accent)' : cumDiff > 0 ? 'var(--danger)' : 'var(--text-3)';
-        return `<div class="lb-grid-row${showCum ? ' lb-grid-cum' : ''} ${topCls}">
+        const cumArrow = cumDiff < 0 ? '▲' : cumDiff > 0 ? '▼' : '';
+        const cumBadge = showCum && cumRank
+          ? `<span class="lb-cum-badge" style="color:${cumColor};">${cumRank}위${cumArrow ? ` ${cumArrow}` : ''}</span>`
+          : '';
+        return `<div class="lb-grid-row ${topCls}">
           <span><span class="lb-rank-badge ${cls}">${rankLabel}</span></span>
           <div class="lb-name-cell">
-            <span class="lb-player-name">${escapeHtml(s.name)}</span>
+            <span class="lb-player-name">${escapeHtml(s.name)}</span>${cumBadge}
           </div>
           <span class="lb-record-cell">${s.w}승 ${s.d}무 ${s.l}패</span>
           <span class="lb-record-cell">${wrPct}%</span>
           <span style="text-align:center;font-size:11px;font-weight:900;color:${s.top1 ? 'var(--accent-2)' : 'var(--text-3)'};">${s.top1 || '—'}</span>
-          ${showCum
-            ? `<span style="text-align:center;font-size:11px;font-weight:900;color:${cumColor};">${cumRank || '—'}</span>
-               <span style="text-align:center;font-size:10px;font-weight:800;color:var(--text-2);">${s.days || '—'}</span>`
-            : `<span style="text-align:center;font-size:10px;font-weight:800;color:var(--text-2);">${s.days || '—'}</span>`
-          }
+          <span style="text-align:center;font-size:10px;font-weight:800;color:var(--text-2);">${s.days || '—'}</span>
           <div class="lb-pts-cell">
             <span class="lb-pts-main">${s.pts}<span class="pts-unit">P</span></span>
           </div>
