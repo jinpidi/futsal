@@ -3104,7 +3104,12 @@ function speak(text) {
     u.volume = 1.0;
     // iOS sometimes needs a short pause after cancel()
     setTimeout(() => {
-      try { window.speechSynthesis.speak(u); } catch(e) {}
+      try {
+        if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+        window.speechSynthesis.speak(u);
+        // iOS quirk: speak() 직후 paused로 남는 경우가 있어 한 번 더 resume
+        setTimeout(() => { try { window.speechSynthesis.resume(); } catch(e) {} }, 120);
+      } catch(e) {}
     }, 80);
   } catch(e) {}
 }
@@ -3118,76 +3123,64 @@ function playAlarm(notifBody) {
   // 2) 시스템 알림 (백그라운드 탭 / 화면 잠금 상태에서도 표시)
   _showAlarmNotif(notifBody || '라운드 알람이 울렸습니다!');
 
-  // 3) 웹 오디오 (탭이 열려 있어야 동작)
+  // 3) 웹 오디오 — 심판 휘슬 소리 (탭이 열려 있어야 동작)
   try {
-    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!_audioCtx || _audioCtx.state === 'closed') {
+      _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
     const ctx = _audioCtx;
 
-    const fire = () => {
+    // 휘슬 합성: 3kHz대 이중 오실레이터 + 45Hz 트릴(콩알 구르는 소리) + 컴프레서로 최대 음량
+    const fireWhistle = () => {
       const cmp = ctx.createDynamicsCompressor();
-      cmp.threshold.value = -6;
+      cmp.threshold.value = -10;
       cmp.knee.value      = 0;
       cmp.ratio.value     = 20;
       cmp.attack.value    = 0.001;
       cmp.release.value   = 0.1;
-      cmp.connect(ctx.destination);
+      const master = ctx.createGain();
+      master.gain.value = 1.0;
+      cmp.connect(master); master.connect(ctx.destination);
 
-      const beep = (freq, harmonicRatio, delay, dur) => {
-        [freq, freq * harmonicRatio].forEach(f => {
+      const blast = (delay, dur) => {
+        const t0 = ctx.currentTime + delay;
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass'; bp.frequency.value = 3000; bp.Q.value = 1.1;
+        const g = ctx.createGain();
+        bp.connect(g); g.connect(cmp);
+
+        // 이중 톤 (실제 휘슬의 비트음)
+        [3150, 2870].forEach(f => {
           const osc = ctx.createOscillator();
-          const g   = ctx.createGain();
-          osc.connect(g); g.connect(cmp);
           osc.type = 'square';
           osc.frequency.value = f;
-          const t = ctx.currentTime + delay;
-          g.gain.setValueAtTime(0.75, t);
-          g.gain.setValueAtTime(0.75, t + dur * 0.8);
-          g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-          osc.start(t); osc.stop(t + dur);
+          osc.connect(bp);
+          osc.start(t0); osc.stop(t0 + dur);
         });
+        // 트릴 LFO — 휘슬 특유의 '삐르르르' 떨림
+        const lfo = ctx.createOscillator();
+        const lfoG = ctx.createGain();
+        lfo.frequency.value = 45;
+        lfoG.gain.value = 0.4;
+        lfo.connect(lfoG); lfoG.connect(g.gain);
+        lfo.start(t0); lfo.stop(t0 + dur);
+
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.linearRampToValueAtTime(0.85, t0 + 0.02);
+        g.gain.setValueAtTime(0.85, t0 + dur - 0.06);
+        g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
       };
-      // 삐삐삐 — 삐— 삐—— 삐———— (약 5초)
-      beep(1047, 1.5, 0.00, 0.18);
-      beep(1047, 1.5, 0.23, 0.18);
-      beep(1047, 1.5, 0.46, 0.18);
-      beep(880,  2.0, 0.78, 0.55);
-      beep(1047, 1.5, 1.42, 0.55);
-      beep(880,  2.0, 2.08, 0.80);
-      beep(1047, 1.5, 3.00, 1.20);
-      beep(880,  1.8, 4.30, 0.65);
+
+      // 삑— 삑— 삐이이이익———  (총 약 4.3초)
+      blast(0.00, 0.85);
+      blast(1.00, 0.85);
+      blast(2.00, 2.30);
     };
 
-    if (ctx.state === 'closed') {
-      // AudioContext was closed — recreate and retry once
-      try {
-        _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const ctx2 = _audioCtx;
-        ctx2.resume().then(() => {
-          // re-run fire() with new ctx (rebuild since closure captures old ctx)
-          const beep2 = (freq, harmonicRatio, delay, dur) => {
-            [freq, freq * harmonicRatio].forEach(f => {
-              const osc = ctx2.createOscillator();
-              const g   = ctx2.createGain();
-              osc.connect(g); g.connect(ctx2.destination);
-              osc.type = 'square';
-              osc.frequency.value = f;
-              const t = ctx2.currentTime + delay;
-              g.gain.setValueAtTime(0.75, t);
-              g.gain.setValueAtTime(0.75, t + dur * 0.8);
-              g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-              osc.start(t); osc.stop(t + dur);
-            });
-          };
-          beep2(1047, 1.5, 0.00, 0.18); beep2(1047, 1.5, 0.23, 0.18);
-          beep2(1047, 1.5, 0.46, 0.18); beep2(880,  2.0, 0.78, 0.55);
-          beep2(1047, 1.5, 1.42, 0.55); beep2(880,  2.0, 2.08, 0.80);
-          beep2(1047, 1.5, 3.00, 1.20); beep2(880,  1.8, 4.30, 0.65);
-        });
-      } catch(e2) {}
-    } else if (ctx.state === 'suspended') {
-      ctx.resume().then(fire);
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(fireWhistle).catch(() => { try { fireWhistle(); } catch(e){} });
     } else {
-      fire();
+      fireWhistle();
     }
   } catch (e) {}
 }
@@ -3307,25 +3300,30 @@ function updateTimerDisplay() {
   // ── PLAYING
   } else if (phase === 'playing') {
     const rem = Math.max(0, phaseEndAt - now);
-    // 2분 남은 시점 — 비프음 + 음성 알림
-    if (!_liveTimer.warned2m && rem <= 120000 && rem > 115000) {
+    // 1분 남은 시점 — 비프음 + 음성 알림
+    // (하한선 없이 rem<=60초면 발동: 백그라운드 탭에서 틱이 밀려도 놓치지 않음)
+    if (!_liveTimer.warned2m && rem <= 60000 && rem > 3000) {
       _liveTimer.warned2m = true;
-      // 짧은 알림음 먼저 → 음성이 더 잘 들림
       try {
-        if (_audioCtx && _audioCtx.state === 'running') {
-          const t = _audioCtx.currentTime;
-          [0, 0.18].forEach(d => {
-            const osc = _audioCtx.createOscillator();
-            const g = _audioCtx.createGain();
-            osc.connect(g); g.connect(_audioCtx.destination);
-            osc.type = 'sine'; osc.frequency.value = 1047;
-            g.gain.setValueAtTime(0.9, t + d);
-            g.gain.exponentialRampToValueAtTime(0.001, t + d + 0.14);
-            osc.start(t + d); osc.stop(t + d + 0.14);
-          });
+        if (_audioCtx && _audioCtx.state !== 'closed') {
+          const playBeeps = () => {
+            const t = _audioCtx.currentTime;
+            [0, 0.18].forEach(d => {
+              const osc = _audioCtx.createOscillator();
+              const g = _audioCtx.createGain();
+              osc.connect(g); g.connect(_audioCtx.destination);
+              osc.type = 'sine'; osc.frequency.value = 1047;
+              g.gain.setValueAtTime(0.95, t + d);
+              g.gain.exponentialRampToValueAtTime(0.001, t + d + 0.14);
+              osc.start(t + d); osc.stop(t + d + 0.14);
+            });
+          };
+          if (_audioCtx.state === 'suspended') _audioCtx.resume().then(playBeeps).catch(()=>{});
+          else playBeeps();
         }
       } catch(e) {}
-      setTimeout(() => speak('2분 남았습니다'), 450);
+      setTimeout(() => speak('1분 남았습니다'), 450);
+      _saveLiveTimerState();
     }
     const pct = Math.max(0, Math.min(100, (rem / (roundSecs * 1000)) * 100));
     const danger = rem < 60000;
