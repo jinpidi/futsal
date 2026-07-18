@@ -3124,25 +3124,32 @@ function playAlarm(notifBody) {
   _showAlarmNotif(notifBody || '라운드 알람이 울렸습니다!');
 
   // 3) 웹 오디오 — 심판 휘슬 소리 (탭이 열려 있어야 동작)
+  // 삑— 삑— 삐이이이익———  (총 약 4.3초)
+  playWhistle([[0.00, 0.85], [1.00, 0.85], [2.00, 2.30]]);
+}
+
+// 휘슬 합성: 3kHz대 이중 오실레이터 + 45Hz 트릴(콩알 구르는 소리)
+// blasts = [[delay초, 지속초], ...]
+function playWhistle(blasts) {
   try {
     if (!_audioCtx || _audioCtx.state === 'closed') {
       _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
     const ctx = _audioCtx;
 
-    // 휘슬 합성: 3kHz대 이중 오실레이터 + 45Hz 트릴(콩알 구르는 소리) + 컴프레서로 최대 음량
-    const fireWhistle = () => {
+    const fire = () => {
+      // 프리게인으로 크게 증폭 → 컴프레서가 클리핑 없이 눌러줌 → 최대 체감 음량
       const cmp = ctx.createDynamicsCompressor();
-      cmp.threshold.value = -10;
+      cmp.threshold.value = -12;
       cmp.knee.value      = 0;
       cmp.ratio.value     = 20;
       cmp.attack.value    = 0.001;
-      cmp.release.value   = 0.1;
+      cmp.release.value   = 0.08;
       const master = ctx.createGain();
-      master.gain.value = 1.0;
+      master.gain.value = 1.4;
       cmp.connect(master); master.connect(ctx.destination);
 
-      const blast = (delay, dur) => {
+      blasts.forEach(([delay, dur]) => {
         const t0 = ctx.currentTime + delay;
         const bp = ctx.createBiquadFilter();
         bp.type = 'bandpass'; bp.frequency.value = 3000; bp.Q.value = 1.1;
@@ -3161,26 +3168,21 @@ function playAlarm(notifBody) {
         const lfo = ctx.createOscillator();
         const lfoG = ctx.createGain();
         lfo.frequency.value = 45;
-        lfoG.gain.value = 0.4;
+        lfoG.gain.value = 0.8;
         lfo.connect(lfoG); lfoG.connect(g.gain);
         lfo.start(t0); lfo.stop(t0 + dur);
 
         g.gain.setValueAtTime(0.0001, t0);
-        g.gain.linearRampToValueAtTime(0.85, t0 + 0.02);
-        g.gain.setValueAtTime(0.85, t0 + dur - 0.06);
+        g.gain.linearRampToValueAtTime(2.0, t0 + 0.02);
+        g.gain.setValueAtTime(2.0, t0 + dur - 0.06);
         g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
-      };
-
-      // 삑— 삑— 삐이이이익———  (총 약 4.3초)
-      blast(0.00, 0.85);
-      blast(1.00, 0.85);
-      blast(2.00, 2.30);
+      });
     };
 
     if (ctx.state === 'suspended') {
-      ctx.resume().then(fireWhistle).catch(() => { try { fireWhistle(); } catch(e){} });
+      ctx.resume().then(fire).catch(() => { try { fire(); } catch(e){} });
     } else {
-      fireWhistle();
+      fire();
     }
   } catch (e) {}
 }
@@ -3261,7 +3263,7 @@ function updateTimerDisplay() {
     phase = _liveTimer.phase;
   }
 
-  // ── Auto-transition: break → playing (no alarm, just advance)
+  // ── Auto-transition: break → playing (시작 휘슬 한 번)
   if (phase === 'break' && phaseEndAt && now >= phaseEndAt) {
     if (roundIdx + 1 < numRounds) {
       _liveTimer.roundIdx = roundIdx + 1;
@@ -3269,6 +3271,7 @@ function updateTimerDisplay() {
       _liveTimer.phaseEndAt = now + roundSecs * 1000;
       _liveTimer.alerted = false;
       _liveTimer.warned2m = false;
+      playWhistle([[0.05, 0.9]]);
       updateTimerDisplay(); return;
     } else {
       _liveTimer.phase = 'done';
@@ -3300,9 +3303,9 @@ function updateTimerDisplay() {
   // ── PLAYING
   } else if (phase === 'playing') {
     const rem = Math.max(0, phaseEndAt - now);
-    // 1분 남은 시점 — 비프음 + 음성 알림
-    // (하한선 없이 rem<=60초면 발동: 백그라운드 탭에서 틱이 밀려도 놓치지 않음)
-    if (!_liveTimer.warned2m && rem <= 60000 && rem > 3000) {
+    // 2분 남은 시점 — 비프음 + 음성 알림
+    // (하한선 없이 rem<=120초면 발동: 백그라운드 탭에서 틱이 밀려도 놓치지 않음)
+    if (!_liveTimer.warned2m && rem <= 120000 && rem > 3000) {
       _liveTimer.warned2m = true;
       try {
         if (_audioCtx && _audioCtx.state !== 'closed') {
@@ -3322,7 +3325,7 @@ function updateTimerDisplay() {
           else playBeeps();
         }
       } catch(e) {}
-      setTimeout(() => speak('1분 남았습니다'), 450);
+      setTimeout(() => speak('2분 남았습니다'), 450);
       _saveLiveTimerState();
     }
     const pct = Math.max(0, Math.min(100, (rem / (roundSecs * 1000)) * 100));
@@ -3421,6 +3424,7 @@ function updateTimerDisplay() {
     _startAudioKeepAlive();
     _requestNotifPerm();
     _requestWakeLock();
+    playWhistle([[0.05, 0.9]]); // 시작 휘슬 한 번
     _liveTimer.phase = 'playing';
     _liveTimer.roundIdx = 0;
     _liveTimer.phaseEndAt = Date.now() + _liveTimer.roundSecs * 1000;
@@ -3453,6 +3457,7 @@ function updateTimerDisplay() {
   const onSkipBreak = $('#lv-t-skip-break');
   if (onSkipBreak) onSkipBreak.onclick = () => {
     _unlockAudio();
+    playWhistle([[0.05, 0.9]]); // 시작 휘슬 한 번
     _liveTimer.roundIdx = _liveTimer.roundIdx + 1;
     _liveTimer.phase = 'playing';
     _liveTimer.phaseEndAt = Date.now() + _liveTimer.roundSecs * 1000;
