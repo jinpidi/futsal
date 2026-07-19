@@ -2994,9 +2994,17 @@ let _tbActive = null;
 /* ── Audio context (singleton, unlocked on first user gesture) ── */
 let _audioCtx  = null;
 let _wakeLock  = null;
+let _wantWakeLock = false;   // 경기 진행 중이면 화면 잠금 해제를 계속 원함
+
+// iOS 16.4+ : 오디오 세션을 'playback'으로 지정 → 무음(진동) 스위치를 무시하고
+// 미디어 볼륨으로 재생. 폰이 무음 모드여도 휘슬이 크게 울리게 하는 핵심.
+function _setPlaybackAudioSession() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+}
 
 function _unlockAudio() {
   try {
+    _setPlaybackAudioSession();
     if (_audioCtx && _audioCtx.state === 'closed') _audioCtx = null;
     if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (_audioCtx.state === 'suspended') _audioCtx.resume();
@@ -3055,15 +3063,52 @@ function _stopLiveTimerPersist() {
 }
 
 async function _requestWakeLock() {
+  _wantWakeLock = true;
   try {
-    if ('wakeLock' in navigator) {
+    if ('wakeLock' in navigator && document.visibilityState === 'visible') {
       _wakeLock = await navigator.wakeLock.request('screen');
+      // 브라우저가 자동 해제하면(백그라운드 전환 등) 참조를 비워 재획득 가능하게
+      _wakeLock.addEventListener('release', () => { _wakeLock = null; });
     }
   } catch (e) {}
 }
 function _releaseWakeLock() {
+  _wantWakeLock = false;
   try { if (_wakeLock) { _wakeLock.release(); _wakeLock = null; } } catch (e) {}
 }
+// 화면이 다시 보일 때 Wake Lock 재획득 (iOS/Chrome은 백그라운드 시 자동 해제함)
+async function _reacquireWakeLock() {
+  if (!_wantWakeLock) return;
+  try {
+    if ('wakeLock' in navigator && !_wakeLock && document.visibilityState === 'visible') {
+      _wakeLock = await navigator.wakeLock.request('screen');
+      _wakeLock.addEventListener('release', () => { _wakeLock = null; });
+    }
+  } catch (e) {}
+}
+
+// ── 앱이 다시 보이거나 포커스를 얻을 때 오디오/타이머를 재동기화 ──────────
+// 화면 꺼짐/백그라운드 동안 AudioContext는 정지·오디오시계는 멈춘다.
+// 다시 보이는 순간 ctx resume + Wake Lock 재획득 + 예약 사운드를 벽시계 기준으로
+// 다시 걸어 정확도를 회복한다. (폰을 흘끗 볼 때마다 시계가 재정렬됨)
+function _resyncOnVisible() {
+  if (document.visibilityState !== 'visible') return;
+  try {
+    _setPlaybackAudioSession();
+    if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume().catch(()=>{});
+    if (window.speechSynthesis && window.speechSynthesis.paused) window.speechSynthesis.resume();
+  } catch (e) {}
+  _reacquireWakeLock();
+  const p = _liveTimer.phase;
+  if (p === 'playing' || p === 'break') {
+    // 예약 사운드를 다시 맞추고 즉시 화면 갱신(전환 폴백 트리거)
+    _armPhaseAudio();
+    updateTimerDisplay();
+  }
+}
+document.addEventListener('visibilitychange', _resyncOnVisible);
+window.addEventListener('focus', _resyncOnVisible);
+window.addEventListener('pageshow', _resyncOnVisible);
 
 async function _requestNotifPerm() {
   try {
@@ -3090,6 +3135,7 @@ let _liveTimer = {
   phaseEndAt: null,
   interval: null,
   alerted: false,
+  warned2m: false,
 };
 
 function speak(text) {
@@ -3114,77 +3160,161 @@ function speak(text) {
   } catch(e) {}
 }
 
-function playAlarm(notifBody) {
-  // 1) 진동 (Android Chrome에서 동작)
+// 사용자 제스처(시작 버튼) 시점에 TTS를 예열 → 첫 음성이 씹히는 iOS 버그 완화
+function _primeSpeech() {
+  try {
+    if (!window.speechSynthesis) return;
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0.01; u.lang = 'ko-KR';
+    window.speechSynthesis.speak(u);
+  } catch(e) {}
+}
+
+/* ── 사운드 합성 (오디오 시계 기반 예약 가능) ──────────────────────
+   핵심 개선: 소리를 "지금 재생"이 아니라 AudioContext 타임라인에 미리 예약해두면
+   JS 타이머가 백그라운드에서 스로틀돼도 정확한 시각에 울린다.               */
+
+function _ensureCtx() {
+  if (!_audioCtx || _audioCtx.state === 'closed') {
+    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { return null; }
+  }
+  return _audioCtx;
+}
+
+// 휘슬 1회를 절대 오디오시각 baseTime(ctx.currentTime 기준)에 만든다.
+// 생성한 오실레이터를 collect 배열에 담아 나중에 취소 가능하게 한다.
+function _buildWhistle(ctx, baseTime, blasts, collect) {
+  // 프리게인으로 크게 증폭 → 컴프레서가 클리핑 없이 눌러줌 → 최대 체감 음량
+  const cmp = ctx.createDynamicsCompressor();
+  cmp.threshold.value = -12;
+  cmp.knee.value      = 0;
+  cmp.ratio.value     = 20;
+  cmp.attack.value    = 0.001;
+  cmp.release.value   = 0.08;
+  const master = ctx.createGain();
+  master.gain.value = 1.8;               // 1.4 → 1.8 (더 크게)
+  cmp.connect(master); master.connect(ctx.destination);
+
+  blasts.forEach(([delay, dur]) => {
+    const t0 = baseTime + delay;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = 3000; bp.Q.value = 1.1;
+    const g = ctx.createGain();
+    bp.connect(g); g.connect(cmp);
+
+    // 이중 톤 (실제 휘슬의 비트음)
+    [3150, 2870].forEach(f => {
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.value = f;
+      osc.connect(bp);
+      osc.start(t0); osc.stop(t0 + dur);
+      if (collect) collect.push(osc);
+    });
+    // 트릴 LFO — 휘슬 특유의 '삐르르르' 떨림
+    const lfo = ctx.createOscillator();
+    const lfoG = ctx.createGain();
+    lfo.frequency.value = 45;
+    lfoG.gain.value = 0.8;
+    lfo.connect(lfoG); lfoG.connect(g.gain);
+    lfo.start(t0); lfo.stop(t0 + dur);
+    if (collect) collect.push(lfo);
+
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(2.0, t0 + 0.02);
+    g.gain.setValueAtTime(2.0, t0 + dur - 0.06);
+    g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
+  });
+}
+
+// 2분 경고음: 뚜-뚜-뚜 3연타 (음성 없이도 알아챌 수 있는 명확한 신호)
+function _buildWarning(ctx, baseTime, collect) {
+  [0, 0.22, 0.44].forEach(d => {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.connect(g); g.connect(ctx.destination);
+    osc.type = 'sine'; osc.frequency.value = 1047;   // C6
+    const t = baseTime + d;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.95, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+    osc.start(t); osc.stop(t + 0.17);
+    if (collect) collect.push(osc);
+  });
+}
+
+// blasts 를 "지금" 재생 (시작 휘슬, 수동 종료 등)
+const WHISTLE_END   = [[0.00, 0.85], [1.00, 0.85], [2.00, 2.30]];  // 삑—삑—삐이익
+const WHISTLE_START = [[0.05, 0.9]];                                // 삑—
+function playWhistle(blasts) {
+  const ctx = _ensureCtx();
+  if (!ctx) return;
+  _setPlaybackAudioSession();
+  const fire = () => { try { _buildWhistle(ctx, ctx.currentTime + 0.02, blasts, null); } catch(e){} };
+  if (ctx.state === 'suspended') ctx.resume().then(fire).catch(() => fire());
+  else fire();
+}
+function _playWarningNow() {
+  const ctx = _ensureCtx();
+  if (!ctx) return;
+  _setPlaybackAudioSession();
+  const fire = () => { try { _buildWarning(ctx, ctx.currentTime + 0.02, null); } catch(e){} };
+  if (ctx.state === 'suspended') ctx.resume().then(fire).catch(() => fire());
+  else fire();
+}
+
+// 진동 + 시스템 알림 (오디오와 별개, 백그라운드 폴백용)
+function _alarmNonAudio(notifBody) {
   try {
     if ('vibrate' in navigator) navigator.vibrate([500,100,500,100,500,150,1000,150,1000]);
   } catch (e) {}
-
-  // 2) 시스템 알림 (백그라운드 탭 / 화면 잠금 상태에서도 표시)
   _showAlarmNotif(notifBody || '라운드 알람이 울렸습니다!');
-
-  // 3) 웹 오디오 — 심판 휘슬 소리 (탭이 열려 있어야 동작)
-  // 삑— 삑— 삐이이이익———  (총 약 4.3초)
-  playWhistle([[0.00, 0.85], [1.00, 0.85], [2.00, 2.30]]);
 }
 
-// 휘슬 합성: 3kHz대 이중 오실레이터 + 45Hz 트릴(콩알 구르는 소리)
-// blasts = [[delay초, 지속초], ...]
-function playWhistle(blasts) {
-  try {
-    if (!_audioCtx || _audioCtx.state === 'closed') {
-      _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    const ctx = _audioCtx;
+function playAlarm(notifBody) {
+  _alarmNonAudio(notifBody);
+  playWhistle(WHISTLE_END);
+}
 
-    const fire = () => {
-      // 프리게인으로 크게 증폭 → 컴프레서가 클리핑 없이 눌러줌 → 최대 체감 음량
-      const cmp = ctx.createDynamicsCompressor();
-      cmp.threshold.value = -12;
-      cmp.knee.value      = 0;
-      cmp.ratio.value     = 20;
-      cmp.attack.value    = 0.001;
-      cmp.release.value   = 0.08;
-      const master = ctx.createGain();
-      master.gain.value = 1.4;
-      cmp.connect(master); master.connect(ctx.destination);
+/* ── 예약 사운드(현재 페이즈용) ────────────────────────────────── */
+let _armedEnd  = [];   // 종료 휘슬(또는 다음 라운드 시작 휘슬) 예약 노드
+let _armedWarn = [];   // 2분 경고음 예약 노드
+function _cancelArmed(arr) {
+  arr.forEach(n => { try { n.stop(); } catch(e){} try { n.disconnect(); } catch(e){} });
+  arr.length = 0;
+}
+function _cancelAllArmed() { _cancelArmed(_armedEnd); _cancelArmed(_armedWarn); }
 
-      blasts.forEach(([delay, dur]) => {
-        const t0 = ctx.currentTime + delay;
-        const bp = ctx.createBiquadFilter();
-        bp.type = 'bandpass'; bp.frequency.value = 3000; bp.Q.value = 1.1;
-        const g = ctx.createGain();
-        bp.connect(g); g.connect(cmp);
+// 현재 페이즈에 맞춰 종료 휘슬/2분 경고를 오디오 시계에 예약한다.
+// 전환/조정/화면복귀 시마다 호출 → 항상 벽시계 기준으로 다시 맞춘다.
+function _armPhaseAudio() {
+  _cancelAllArmed();
+  const lt = _liveTimer;
+  if (lt.phase !== 'playing' && lt.phase !== 'break') return;
+  if (!lt.phaseEndAt) return;
+  const ctx = _ensureCtx();
+  if (!ctx) return;
+  _setPlaybackAudioSession();
 
-        // 이중 톤 (실제 휘슬의 비트음)
-        [3150, 2870].forEach(f => {
-          const osc = ctx.createOscillator();
-          osc.type = 'square';
-          osc.frequency.value = f;
-          osc.connect(bp);
-          osc.start(t0); osc.stop(t0 + dur);
-        });
-        // 트릴 LFO — 휘슬 특유의 '삐르르르' 떨림
-        const lfo = ctx.createOscillator();
-        const lfoG = ctx.createGain();
-        lfo.frequency.value = 45;
-        lfoG.gain.value = 0.8;
-        lfo.connect(lfoG); lfoG.connect(g.gain);
-        lfo.start(t0); lfo.stop(t0 + dur);
-
-        g.gain.setValueAtTime(0.0001, t0);
-        g.gain.linearRampToValueAtTime(2.0, t0 + 0.02);
-        g.gain.setValueAtTime(2.0, t0 + dur - 0.06);
-        g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
-      });
-    };
-
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(fire).catch(() => { try { fire(); } catch(e){} });
-    } else {
-      fire();
-    }
-  } catch (e) {}
+  const arm = () => {
+    try {
+      const now = Date.now();
+      const endInSec = (lt.phaseEndAt - now) / 1000;
+      if (endInSec <= 0.3) return;
+      const base = ctx.currentTime;
+      if (lt.phase === 'playing') {
+        // 2분 경고 (아직 안 울렸을 때만)
+        const warnInSec = endInSec - 120;
+        if (!lt.warned2m && warnInSec > 0.3) _buildWarning(ctx, base + warnInSec, _armedWarn);
+        // 라운드 종료 휘슬
+        _buildWhistle(ctx, base + endInSec, WHISTLE_END, _armedEnd);
+      } else { // break → 다음 라운드 시작 휘슬
+        _buildWhistle(ctx, base + endInSec, WHISTLE_START, _armedEnd);
+      }
+    } catch(e) {}
+  };
+  if (ctx.state === 'suspended') ctx.resume().then(arm).catch(() => {});
+  else arm();
 }
 
 function _timerFmt(ms) {
@@ -3227,6 +3357,8 @@ function _roundDots(current, total, phase) {
 
 function resetLiveTimer() {
   if (_liveTimer.interval) clearInterval(_liveTimer.interval);
+  _cancelAllArmed();
+  _releaseWakeLock();
   _stopAudioKeepAlive();
   _stopLiveTimerPersist();
   const rs = _liveTimer.roundSecs;
@@ -3247,17 +3379,26 @@ function updateTimerDisplay() {
     if (!_liveTimer.alerted) {
       _liveTimer.alerted = true;
       const isLast = roundIdx + 1 >= numRounds;
-      playAlarm(isLast ? `RD ${roundIdx + 1} 종료 · 전체 완료!` : `RD ${roundIdx + 1} 종료 · 쉬는시간`);
+      // 예약된 종료 휘슬이 방금 울렸는지 판단:
+      //  - ctx가 running이고 틱이 정시(1.2초 이내)면 예약음이 이미 울림 → 중복 방지
+      //  - 아니면(화면 꺼짐→깨어남 등으로 예약 씹힘) 지금 즉시 재생 (폴백)
+      const lateness = now - phaseEndAt;
+      const scheduledLikelyFired = _audioCtx && _audioCtx.state === 'running' && lateness < 1200;
+      _cancelAllArmed();
+      _alarmNonAudio(isLast ? `RD ${roundIdx + 1} 종료 · 전체 완료!` : `RD ${roundIdx + 1} 종료 · 쉬는시간`);
+      if (!scheduledLikelyFired) playWhistle(WHISTLE_END);
       _saveLiveTimerState();
     }
     if (roundIdx + 1 < numRounds) {
       _liveTimer.phase = 'break';
       _liveTimer.phaseEndAt = now + breakSecs * 1000;
       _liveTimer.alerted = false;
+      _armPhaseAudio();               // 다음 라운드 시작 휘슬을 오디오 시계에 예약
       updateTimerDisplay(); return;
     } else {
       _liveTimer.phase = 'done';
       if (_liveTimer.interval) { clearInterval(_liveTimer.interval); _liveTimer.interval = null; }
+      _cancelAllArmed();
       _releaseWakeLock();
     }
     phase = _liveTimer.phase;
@@ -3266,16 +3407,21 @@ function updateTimerDisplay() {
   // ── Auto-transition: break → playing (시작 휘슬 한 번)
   if (phase === 'break' && phaseEndAt && now >= phaseEndAt) {
     if (roundIdx + 1 < numRounds) {
+      const lateness = now - phaseEndAt;
+      const scheduledLikelyFired = _audioCtx && _audioCtx.state === 'running' && lateness < 1200;
+      _cancelAllArmed();
       _liveTimer.roundIdx = roundIdx + 1;
       _liveTimer.phase = 'playing';
       _liveTimer.phaseEndAt = now + roundSecs * 1000;
       _liveTimer.alerted = false;
       _liveTimer.warned2m = false;
-      playWhistle([[0.05, 0.9]]);
+      if (!scheduledLikelyFired) playWhistle(WHISTLE_START);
+      _armPhaseAudio();               // 새 라운드 종료 휘슬 + 2분 경고 예약
       updateTimerDisplay(); return;
     } else {
       _liveTimer.phase = 'done';
       if (_liveTimer.interval) { clearInterval(_liveTimer.interval); _liveTimer.interval = null; }
+      _cancelAllArmed();
       _releaseWakeLock();
     }
     phase = _liveTimer.phase; roundIdx = _liveTimer.roundIdx;
@@ -3303,29 +3449,16 @@ function updateTimerDisplay() {
   // ── PLAYING
   } else if (phase === 'playing') {
     const rem = Math.max(0, phaseEndAt - now);
-    // 2분 남은 시점 — 비프음 + 음성 알림
+    // 2분 남은 시점 — 경고음 + 음성 알림
     // (하한선 없이 rem<=120초면 발동: 백그라운드 탭에서 틱이 밀려도 놓치지 않음)
     if (!_liveTimer.warned2m && rem <= 120000 && rem > 3000) {
       _liveTimer.warned2m = true;
-      try {
-        if (_audioCtx && _audioCtx.state !== 'closed') {
-          const playBeeps = () => {
-            const t = _audioCtx.currentTime;
-            [0, 0.18].forEach(d => {
-              const osc = _audioCtx.createOscillator();
-              const g = _audioCtx.createGain();
-              osc.connect(g); g.connect(_audioCtx.destination);
-              osc.type = 'sine'; osc.frequency.value = 1047;
-              g.gain.setValueAtTime(0.95, t + d);
-              g.gain.exponentialRampToValueAtTime(0.001, t + d + 0.14);
-              osc.start(t + d); osc.stop(t + d + 0.14);
-            });
-          };
-          if (_audioCtx.state === 'suspended') _audioCtx.resume().then(playBeeps).catch(()=>{});
-          else playBeeps();
-        }
-      } catch(e) {}
-      setTimeout(() => speak('2분 남았습니다'), 450);
+      // 예약된 경고음이 방금 울렸는지 판단 (종료 휘슬 로직과 동일)
+      const late = 120000 - rem;   // 120초 지점을 얼마나 지났나
+      const scheduledLikelyFired = _audioCtx && _audioCtx.state === 'running' && late < 1500;
+      _cancelArmed(_armedWarn);    // 남은 예약 경고음 취소(중복/지연발동 방지)
+      if (!scheduledLikelyFired) _playWarningNow();
+      setTimeout(() => speak('2분 남았습니다'), scheduledLikelyFired ? 250 : 500);  // TTS는 화면 켜짐 시 베스트에포트
       _saveLiveTimerState();
     }
     const pct = Math.max(0, Math.min(100, (rem / (roundSecs * 1000)) * 100));
@@ -3356,7 +3489,8 @@ function updateTimerDisplay() {
         <button class="btn btn-block" id="lv-t-end" style="flex:2;background:var(--primary);color:#fff;border-radius:10px;font-size:13px;font-weight:800;padding:12px;">⏹ 라운드 종료</button>
         <button class="btn btn-outline" id="lv-t-rp30" style="flex:1;font-size:12px;font-weight:800;padding:10px 0;">+30초</button>
       </div>
-      <button class="btn btn-ghost btn-sm btn-block" id="lv-t-reset" style="margin-top:4px;font-size:11px;">↺ 초기화</button>`;
+      <button class="btn btn-ghost btn-sm btn-block" id="lv-t-reset" style="margin-top:4px;font-size:11px;">↺ 초기화</button>
+      <div style="text-align:center;font-size:10.5px;color:var(--text-3);font-weight:700;margin-top:8px;line-height:1.4;">🔆 화면을 켜둔 채로 두면 휘슬·음성이 정확히 울려요<br>(화면이 완전히 꺼지면 소리가 밀릴 수 있어요)</div>`;
 
   // ── BREAK
   } else if (phase === 'break') {
@@ -3410,26 +3544,30 @@ function updateTimerDisplay() {
   if (onRm30) onRm30.onclick = () => {
     _unlockAudio();
     _liveTimer.phaseEndAt = Math.max(Date.now() + 5000, _liveTimer.phaseEndAt - 30000);
+    _armPhaseAudio();               // 종료 시각 변경 → 예약 사운드 다시 맞춤
     updateTimerDisplay();
   };
   const onRp30 = $('#lv-t-rp30');
   if (onRp30) onRp30.onclick = () => {
     _unlockAudio();
     _liveTimer.phaseEndAt += 30000;
+    _armPhaseAudio();               // 종료 시각 변경 → 예약 사운드 다시 맞춤
     updateTimerDisplay();
   };
   const onStart = $('#lv-t-start');
   if (onStart) onStart.onclick = () => {
     _unlockAudio();
+    _primeSpeech();                 // 제스처 시점에 TTS 예열
     _startAudioKeepAlive();
     _requestNotifPerm();
     _requestWakeLock();
-    playWhistle([[0.05, 0.9]]); // 시작 휘슬 한 번
+    playWhistle(WHISTLE_START);     // 시작 휘슬 한 번
     _liveTimer.phase = 'playing';
     _liveTimer.roundIdx = 0;
     _liveTimer.phaseEndAt = Date.now() + _liveTimer.roundSecs * 1000;
     _liveTimer.alerted = false;
     _liveTimer.warned2m = false;
+    _armPhaseAudio();               // 종료 휘슬 + 2분 경고 예약
     if (!_liveTimer.interval) _liveTimer.interval = setInterval(updateTimerDisplay, 400);
     updateTimerDisplay();
     _saveLiveTimerState(); _startLiveTimerPersist();
@@ -3440,15 +3578,18 @@ function updateTimerDisplay() {
     const ri = _liveTimer.roundIdx;
     const nr = _liveTimer.numRounds;
     const isLast = ri >= nr - 1;
+    _cancelAllArmed();              // 예약된 사운드 취소 (수동으로 종료하므로)
     // 수동 종료도 알람 발동
     playAlarm(isLast ? `RD ${ri + 1} 종료 · 전체 완료!` : `RD ${ri + 1} 종료 · 쉬는시간`);
     if (isLast) {
       _liveTimer.phase = 'done';
       if (_liveTimer.interval) { clearInterval(_liveTimer.interval); _liveTimer.interval = null; }
+      _releaseWakeLock();
     } else {
       _liveTimer.phase = 'break';
       _liveTimer.phaseEndAt = Date.now() + _liveTimer.breakSecs * 1000;
       _liveTimer.alerted = false;
+      _armPhaseAudio();            // 다음 라운드 시작 휘슬 예약
     }
     _saveLiveTimerState();
     updateTimerDisplay();
@@ -3457,12 +3598,14 @@ function updateTimerDisplay() {
   const onSkipBreak = $('#lv-t-skip-break');
   if (onSkipBreak) onSkipBreak.onclick = () => {
     _unlockAudio();
-    playWhistle([[0.05, 0.9]]); // 시작 휘슬 한 번
+    _cancelAllArmed();
+    playWhistle(WHISTLE_START);     // 시작 휘슬 한 번
     _liveTimer.roundIdx = _liveTimer.roundIdx + 1;
     _liveTimer.phase = 'playing';
     _liveTimer.phaseEndAt = Date.now() + _liveTimer.roundSecs * 1000;
     _liveTimer.alerted = false;
     _liveTimer.warned2m = false;
+    _armPhaseAudio();               // 새 라운드 종료 휘슬 + 2분 경고 예약
     updateTimerDisplay();
     _saveLiveTimerState();
   };
@@ -4264,6 +4407,8 @@ function renderLivePage() {
     _liveTimer.interval = setInterval(updateTimerDisplay, 400);
     _startLiveTimerPersist();
     _startAudioKeepAlive();
+    _requestWakeLock();
+    _armPhaseAudio();   // 창 재오픈으로 진행 중 타이머 복원 시 예약 사운드도 다시 건다
   }
 
   $('#round-list-live').innerHTML = (m.rounds || []).map(r => roundCardHtml(r)).join('');
