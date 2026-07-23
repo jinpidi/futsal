@@ -3005,9 +3005,8 @@ function _setPlaybackAudioSession() {
 function _unlockAudio() {
   try {
     _setPlaybackAudioSession();
-    if (_audioCtx && _audioCtx.state === 'closed') _audioCtx = null;
-    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (_audioCtx.state === 'suspended') _audioCtx.resume();
+    _ensureCtx();   // 생성 + statechange 리스너 부착 (드리프트 자가 치유용)
+    if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
   } catch (e) {}
 }
 
@@ -3024,6 +3023,8 @@ function _startAudioKeepAlive() {
       g.gain.value = 0.0001;
       osc.connect(g); g.connect(_audioCtx.destination);
       osc.start(); osc.stop(_audioCtx.currentTime + 0.05);
+      // 오디오시계 드리프트 자가 치유: 안전 구간이면 예약음을 벽시계에 다시 맞춘다
+      _rearmIfSafe();
     } catch(e) {}
   }, 25000);
 }
@@ -3176,7 +3177,14 @@ function _primeSpeech() {
 
 function _ensureCtx() {
   if (!_audioCtx || _audioCtx.state === 'closed') {
-    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { return null; }
+    try {
+      _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // suspend됐다 돌아오면 오디오시계가 벽시계보다 뒤처져 예약음이 늦어짐
+      // → running 복귀 즉시 안전 구간이면 예약을 다시 맞춘다
+      _audioCtx.addEventListener('statechange', () => {
+        try { if (_audioCtx && _audioCtx.state === 'running') _rearmIfSafe(); } catch(e) {}
+      });
+    } catch(e) { return null; }
   }
   return _audioCtx;
 }
@@ -3278,6 +3286,8 @@ function playAlarm(notifBody) {
 /* ── 예약 사운드(현재 페이즈용) ────────────────────────────────── */
 let _armedEnd  = [];   // 종료 휘슬(또는 다음 라운드 시작 휘슬) 예약 노드
 let _armedWarn = [];   // 2분 경고음 예약 노드
+let _armedEndCtxTime  = -1;  // 종료 휘슬이 예약된 오디오시계 시각
+let _armedWarnCtxTime = -1;  // 2분 경고가 예약된 오디오시계 시각
 function _cancelArmed(arr) {
   arr.forEach(n => { try { n.stop(); } catch(e){} try { n.disconnect(); } catch(e){} });
   arr.length = 0;
@@ -3286,10 +3296,19 @@ function _cancelAllArmed() { _cancelArmed(_armedEnd); _cancelArmed(_armedWarn); 
 // 참조만 비운다(정지하지 않음) → 지금 울리는 중인 예약음이 끝까지 재생되게 함
 function _releaseArmed(arr) { arr.length = 0; }
 
+// 예약음이 실제로 발화했는지 결정적으로 판정:
+// 오디오시계(ctx.currentTime)가 예약 시각을 지났으면 소리는 이미 렌더링된 것.
+// (ctx가 중간에 suspend되면 오디오시계가 벽시계보다 뒤처짐 → 아직 안 울린 것으로 정확히 판정됨)
+function _armedFired(arr, ctxTime) {
+  return arr.length > 0 && ctxTime >= 0 && _audioCtx && _audioCtx.state === 'running'
+    && _audioCtx.currentTime >= ctxTime - 0.05;
+}
+
 // 현재 페이즈에 맞춰 종료 휘슬/2분 경고를 오디오 시계에 예약한다.
 // 전환/조정/화면복귀 시마다 호출 → 항상 벽시계 기준으로 다시 맞춘다.
 function _armPhaseAudio() {
   _cancelAllArmed();
+  _armedEndCtxTime = -1; _armedWarnCtxTime = -1;
   const lt = _liveTimer;
   if (lt.phase !== 'playing' && lt.phase !== 'break') return;
   if (!lt.phaseEndAt) return;
@@ -3308,16 +3327,37 @@ function _armPhaseAudio() {
         if (endInSec > 122) lt.warned2m = false;
         // 2분 경고 (아직 안 울렸을 때만)
         const warnInSec = endInSec - 120;
-        if (!lt.warned2m && warnInSec > 0.3) _buildWarning(ctx, base + warnInSec, _armedWarn);
+        if (!lt.warned2m && warnInSec > 0.3) {
+          _buildWarning(ctx, base + warnInSec, _armedWarn);
+          _armedWarnCtxTime = base + warnInSec;
+        }
         // 라운드 종료 휘슬
         _buildWhistle(ctx, base + endInSec, WHISTLE_END, _armedEnd);
+        _armedEndCtxTime = base + endInSec;
       } else { // break → 다음 라운드 시작 휘슬
         _buildWhistle(ctx, base + endInSec, WHISTLE_START, _armedEnd);
+        _armedEndCtxTime = base + endInSec;
       }
     } catch(e) {}
   };
   if (ctx.state === 'suspended') ctx.resume().then(arm).catch(() => {});
   else arm();
+}
+
+// 오디오시계 드리프트 자가 치유: ctx가 잠깐이라도 suspend됐다 돌아오면
+// 예약음이 벽시계보다 늦어진다 → 예약 시각이 안전 구간일 때 다시 맞춘다.
+// (곧 울릴 예정(5초 이내)이거나 방금 울렸을 수 있는 구간에서는 건드리지 않음)
+function _rearmIfSafe() {
+  const lt = _liveTimer;
+  if (lt.phase !== 'playing' && lt.phase !== 'break') return;
+  if (!lt.phaseEndAt) return;
+  const rem = lt.phaseEndAt - Date.now();
+  if (rem < 8000) return;                                       // 종료음 임박/직후 → 금지
+  if (lt.phase === 'playing' && !lt.warned2m) {
+    const toWarn = rem - 120000;
+    if (toWarn > -6000 && toWarn < 6000) return;                // 2분 경고 임박/직후 → 금지
+  }
+  _armPhaseAudio();
 }
 
 function _timerFmt(ms) {
@@ -3382,15 +3422,13 @@ function updateTimerDisplay() {
     if (!_liveTimer.alerted) {
       _liveTimer.alerted = true;
       const isLast = roundIdx + 1 >= numRounds;
-      // 예약된 종료 휘슬이 지금 울리는 중인지 판단:
-      //  - ctx가 running이고 틱이 정시(1.2초 이내)면 예약 휘슬이 지금 울리는 중
-      //    → 절대 stop하지 말고 참조만 비워 끝까지(4.3초) 울리게 함
-      //  - 아니면(화면 꺼짐→깨어남 등으로 예약 씹힘) 즉시 크게 재생 (폴백)
-      const lateness = now - phaseEndAt;
-      const scheduledRinging = _audioCtx && _audioCtx.state === 'running' && lateness < 1200 && _armedEnd.length > 0;
+      // 예약된 종료 휘슬이 실제로 발화했는지 오디오시계로 결정적 판정:
+      //  - 발화함 → 절대 stop하지 말고 참조만 비워 끝까지(4.3초) 울리게 함
+      //  - 발화 안 함(ctx suspend로 오디오시계가 뒤처짐/예약 씹힘) → 즉시 크게 재생
+      const endFired = _armedFired(_armedEnd, _armedEndCtxTime);
       _cancelArmed(_armedWarn);       // 경고음은 이미 지난 시점 → 정리
       _alarmNonAudio(isLast ? `RD ${roundIdx + 1} 종료 · 전체 완료!` : `RD ${roundIdx + 1} 종료 · 쉬는시간`);
-      if (scheduledRinging) _releaseArmed(_armedEnd);       // 끝까지 울리게 둠
+      if (endFired) _releaseArmed(_armedEnd);               // 끝까지 울리게 둠
       else { _cancelArmed(_armedEnd); playWhistle(WHISTLE_END); }
       _saveLiveTimerState();
     }
@@ -3411,9 +3449,8 @@ function updateTimerDisplay() {
   // ── Auto-transition: break → playing (시작 휘슬 한 번)
   if (phase === 'break' && phaseEndAt && now >= phaseEndAt) {
     if (roundIdx + 1 < numRounds) {
-      const lateness = now - phaseEndAt;
-      const scheduledRinging = _audioCtx && _audioCtx.state === 'running' && lateness < 1200 && _armedEnd.length > 0;
-      if (scheduledRinging) _releaseArmed(_armedEnd);       // 시작 휘슬 끝까지 울리게 둠
+      const startFired = _armedFired(_armedEnd, _armedEndCtxTime);
+      if (startFired) _releaseArmed(_armedEnd);             // 시작 휘슬 끝까지 울리게 둠
       else { _cancelArmed(_armedEnd); playWhistle(WHISTLE_START); }
       _cancelArmed(_armedWarn);
       _liveTimer.roundIdx = roundIdx + 1;
@@ -3463,12 +3500,11 @@ function updateTimerDisplay() {
     // (하한선 없이 rem<=120초면 발동: 백그라운드 탭에서 틱이 밀려도 놓치지 않음)
     if (!_liveTimer.warned2m && rem <= 120000 && rem > 3000) {
       _liveTimer.warned2m = true;
-      // 예약 경고음이 지금 울리는 중인지 판단 → 울리는 중이면 stop하지 말고 참조만 비움
-      const late = 120000 - rem;   // 120초 지점을 얼마나 지났나
-      const scheduledRinging = _audioCtx && _audioCtx.state === 'running' && late < 1500 && _armedWarn.length > 0;
-      if (scheduledRinging) _releaseArmed(_armedWarn);      // 끝까지 울리게 둠
+      // 예약 경고음이 실제로 발화했는지 오디오시계로 결정적 판정
+      const warnFired = _armedFired(_armedWarn, _armedWarnCtxTime);
+      if (warnFired) _releaseArmed(_armedWarn);             // 끝까지 울리게 둠
       else { _cancelArmed(_armedWarn); _playWarningNow(); } // 폴백: 즉시 재생
-      setTimeout(() => speak('2분 남았습니다'), scheduledRinging ? 250 : 500);  // TTS는 화면 켜짐 시 베스트에포트
+      setTimeout(() => speak('2분 남았습니다'), warnFired ? 250 : 500);  // TTS는 화면 켜짐 시 베스트에포트
       _saveLiveTimerState();
     }
     const pct = Math.max(0, Math.min(100, (rem / (roundSecs * 1000)) * 100));
@@ -3500,7 +3536,7 @@ function updateTimerDisplay() {
         <button class="btn btn-outline" id="lv-t-rp30" style="flex:1;font-size:12px;font-weight:800;padding:10px 0;">+30초</button>
       </div>
       <button class="btn btn-ghost btn-sm btn-block" id="lv-t-reset" style="margin-top:4px;font-size:11px;">↺ 초기화</button>
-      <div style="text-align:center;font-size:10.5px;color:var(--text-3);font-weight:700;margin-top:8px;line-height:1.4;">🔆 화면을 켜둔 채로 두면 휘슬·음성이 정확히 울려요<br>(화면이 완전히 꺼지면 소리가 밀릴 수 있어요)</div>`;
+      <div style="text-align:center;font-size:10.5px;color:var(--text-3);font-weight:700;margin-top:8px;line-height:1.4;">🔆 화면을 켜둔 채로 두면 휘슬·음성이 정확히 울려요<br>(화면이 완전히 꺼지면 소리가 밀릴 수 있어요) <span style="opacity:0.5;">· 사운드 v3</span></div>`;
 
   // ── BREAK
   } else if (phase === 'break') {
