@@ -1092,6 +1092,21 @@
   .timer-bar-fill.is-danger { background: var(--danger); }
   .timer-bar-sub { font-size: 9.5px; color: var(--text-3); font-weight: 700; text-align: right; }
   .timer-big.timer-danger { color: var(--danger); }
+  /* 코트 밖에서도 읽히는 초대형 카운트다운 */
+  .timer-hero { text-align: center; padding: 2px 0 6px; }
+  .timer-hero .th-time { font-size: 62px; font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: -0.045em; line-height: 0.95; color: var(--text); }
+  .timer-hero .th-time.is-break { color: var(--warn); }
+  .timer-hero .th-time.is-danger { color: var(--danger); }
+  .timer-hero .th-sub { font-size: 11px; font-weight: 800; color: var(--text-3); margin-top: 6px; letter-spacing: 0.02em; }
+  .timer-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 900; padding: 4px 11px; border-radius: 20px; background: rgba(59,130,246,0.14); color: #1d4ed8; border: 1px solid rgba(59,130,246,0.4); letter-spacing: 0.02em; }
+  .timer-chip.is-break { background: rgba(245,158,11,0.15); color: #92400e; border-color: var(--warn); }
+  /* 사운드 상태 배너 */
+  .snd-badge { display: flex; align-items: center; gap: 9px; width: 100%; border-radius: 11px; padding: 10px 12px; font-size: 11.5px; font-weight: 800; margin-bottom: 12px; border: 1px solid transparent; text-align: left; line-height: 1.35; letter-spacing: -0.01em; }
+  .snd-badge .snd-ico { font-size: 17px; line-height: 1; flex-shrink: 0; }
+  .snd-badge.is-on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-2); }
+  .snd-badge.is-off { background: rgba(239,68,68,0.12); border-color: var(--danger); color: var(--danger); cursor: pointer; animation: sndPulse 1.6s ease-in-out infinite; }
+  @keyframes sndPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.34); } 50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); } }
+  .timer-foot { text-align: center; font-size: 10px; color: var(--text-3); font-weight: 700; margin-top: 9px; line-height: 1.45; }
   .timer-est-end {
     margin-top: 8px;
     font-size: 11.5px; font-weight: 800;
@@ -3102,29 +3117,19 @@ function _resyncOnVisible() {
   _reacquireWakeLock();
   const p = _liveTimer.phase;
   if (p === 'playing' || p === 'break') {
-    // 예약 사운드를 다시 맞추고 즉시 화면 갱신(전환 폴백 트리거)
-    _armPhaseAudio();
+    // OS가 백그라운드에서 트랙을 멈춰버렸다면 즉시 되살린다 (제스처 없이도
+    // 이미 한 번 재생 허가를 받은 미디어라 대부분 성공한다)
+    if (_trackWanted && _trackEl && _trackEl.paused) _trackResumeFromState();
+    else if (_trackActive()) _trackSync();  // 트랙 위치를 벽시계에 재정렬
+    else if (!_trackHandlesAudio()) _armPhaseAudio();  // 폴백: 예약 사운드 다시 맞춤
     updateTimerDisplay();
   }
 }
 document.addEventListener('visibilitychange', _resyncOnVisible);
 window.addEventListener('focus', _resyncOnVisible);
 window.addEventListener('pageshow', _resyncOnVisible);
-
-async function _requestNotifPerm() {
-  try {
-    if ('Notification' in window && Notification.permission === 'default') {
-      await Notification.requestPermission();
-    }
-  } catch (e) {}
-}
-function _showAlarmNotif(body) {
-  try {
-    if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification('⏰ kkabi 알람', { body, requireInteraction: true, silent: false });
-    }
-  } catch (e) {}
-}
+// 무음 스위치를 무시하고 미디어 볼륨으로 재생하도록 최대한 이른 시점부터 선언
+_setPlaybackAudioSession();
 
 /* ── Live timer state (persists across re-renders) ── */
 let _liveTimer = {
@@ -3200,7 +3205,7 @@ function _buildWhistle(ctx, baseTime, blasts, collect) {
   cmp.attack.value    = 0.001;
   cmp.release.value   = 0.08;
   const master = ctx.createGain();
-  master.gain.value = 2.2;               // 최대 체감 음량 (컴프레서가 클리핑 방지)
+  master.gain.value = 3.0;               // 최대 체감 음량 (컴프레서가 클리핑 방지)
   cmp.connect(master); master.connect(ctx.destination);
 
   blasts.forEach(([delay, dur]) => {
@@ -3252,8 +3257,10 @@ function _buildWarning(ctx, baseTime, collect) {
 }
 
 // blasts 를 "지금" 재생 (시작 휘슬, 수동 종료 등)
-const WHISTLE_END   = [[0.00, 0.85], [1.00, 0.85], [2.00, 2.30]];  // 삑—삑—삐이익
-const WHISTLE_START = [[0.05, 0.9]];                                // 삑—
+// 종료 휘슬: 삑—삑—삑—삐————이익 (총 약 7초, 운동 중에도 놓치지 않도록 길고 집요하게)
+const WHISTLE_END   = [[0.00, 0.75], [0.95, 0.75], [1.90, 0.75], [2.85, 4.00]];
+const WHISTLE_START = [[0.05, 1.1]];                                // 삑—
+const WHISTLE_END_LEN = 6.9;   // 종료 휘슬 총 길이(초) — 트랙 꼬리 길이 계산에 사용
 function playWhistle(blasts) {
   const ctx = _ensureCtx();
   if (!ctx) return;
@@ -3276,11 +3283,6 @@ function _alarmNonAudio(notifBody) {
   try {
     if ('vibrate' in navigator) navigator.vibrate([500,100,500,100,500,150,1000,150,1000]);
   } catch (e) {}
-}
-
-function playAlarm(notifBody) {
-  _alarmNonAudio(notifBody);
-  playWhistle(WHISTLE_END);
 }
 
 /* ── 예약 사운드(현재 페이즈용) ────────────────────────────────── */
@@ -3349,6 +3351,7 @@ function _armPhaseAudio() {
 // (곧 울릴 예정(5초 이내)이거나 방금 울렸을 수 있는 구간에서는 건드리지 않음)
 function _rearmIfSafe() {
   const lt = _liveTimer;
+  if (_trackHandlesAudio()) return;                                   // 트랙이 담당 중이면 불필요
   if (lt.phase !== 'playing' && lt.phase !== 'break') return;
   if (!lt.phaseEndAt) return;
   const rem = lt.phaseEndAt - Date.now();
@@ -3358,6 +3361,263 @@ function _rearmIfSafe() {
     if (toWarn > -6000 && toWarn < 6000) return;                // 2분 경고 임박/직후 → 금지
   }
   _armPhaseAudio();
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   사운드 트랙 엔진 (v4) — "무조건 울리게" 하는 핵심
+   ───────────────────────────────────────────────────────────────────
+   Web Audio 예약의 한계: iOS는 화면이 꺼지면 AudioContext를 정지시키고
+   JS 타이머도 얼려버린다 → 예약이 밀리거나, 다음 페이즈 사운드를 아예
+   걸지 못한다(쉬는시간 후 휘슬 미발동의 원인).
+
+   해결: 휘슬을 '미리 오디오 파일 안에 구워넣고' <audio>로 연속 재생한다.
+   - <audio>는 iOS에서 백그라운드 재생이 허용된다(음악 앱과 동일)
+   - 소리가 미디어 데이터 자체에 들어 있어 JS가 얼어도 OS가 정시에 재생
+   - loop=true 로 [라운드+쉬는시간] 1주기를 반복 → 매 라운드 전환도
+     JS 개입 없이 OS가 처리한다
+
+   트랙 1주기 구성 (길이 = roundSecs + breakSecs):
+     t=0                 시작 휘슬 (라운드 시작)
+     t=roundSecs-120     2분 경고음 (뚜뚜뚜)
+     t=roundSecs         종료 휘슬 (삑—삑—삐이익, 4.3초)
+     t=roundSecs+break   → 루프 → 다음 라운드 시작 휘슬
+   =================================================================== */
+
+// 16kHz면 배음(5.7~6.3kHz)까지 담겨 훨씬 밝고 시끄럽다. 다만 라운드가 아주 길면
+// 파일이 커지므로 그때만 8kHz로 낮춘다(용량 ~30MB 상한).
+function _trackSampleRate(cycleSec) { return cycleSec <= 900 ? 16000 : 8000; }
+let _trackEl = null, _trackUrl = null, _trackMeta = null, _trackOK = false;
+// _trackWanted: 재생을 '요청한' 시점부터 true (play() 프라미스 확정 전 포함).
+// play()가 resolve되기 전 짧은 창에서 Web Audio 폴백이 끼어들어 소리가 겹치는 것을 막는다.
+let _trackWanted = false;
+
+function _wavAdd(arr, idx, v) {
+  if (idx < 0 || idx >= arr.length) return;
+  let s = arr[idx] + v * 32767;
+  arr[idx] = s > 32767 ? 32767 : (s < -32768 ? -32768 : s);
+}
+
+// 심판 휘슬 합성 — 최대 음량 설계:
+//  · 가산 합성으로 배음(2차)까지 넣어 귀에 꽂히는 밝은 소리 (앨리어싱 없이)
+//  · 트레몰로 깊이를 얕게(0.88~1.0) 유지 → 음량이 꺼지는 골 없이 평균 음량 최대
+//  · 마지막에 하드 리미팅으로 최대 진폭에 바짝 붙임
+function _wavWhistle(arr, sr, atSec, blasts) {
+  const nyq = sr / 2;
+  // [주파수, 가중치] — 나이퀴스트 아래 성분만 사용해 앨리어싱(지지직) 방지
+  const parts = [[2870, 1.0], [3150, 1.0], [5740, 0.38], [6300, 0.38], [1575, 0.22]]
+    .filter(p => p[0] < nyq * 0.95);
+  const norm = parts.reduce((s, p) => s + p[1], 0);
+  blasts.forEach(([delay, dur]) => {
+    const start = Math.floor((atSec + delay) * sr);
+    const n = Math.floor(dur * sr);
+    for (let i = 0; i < n; i++) {
+      const t = i / sr;
+      const atk = 0.012, rel = 0.05;
+      let env = 1;
+      if (t < atk) env = t / atk;
+      else if (t > dur - rel) env = Math.max(0, (dur - t) / rel);
+      const trem = 0.88 + 0.12 * Math.sin(2 * Math.PI * 45 * t);   // 얕은 콩알 트릴
+      let v = 0;
+      for (let k = 0; k < parts.length; k++) v += parts[k][1] * Math.sin(2 * Math.PI * parts[k][0] * t);
+      v = (v / norm) * 2.6;                       // 강하게 밀어넣고
+      v = Math.tanh(v);                           // 부드럽게 리미팅 (클릭 없이 꽉 참)
+      _wavAdd(arr, start + i, v * trem * env * 0.92);   // 리샘플 오버슛 대비 헤드룸
+    }
+  });
+}
+
+// 2분 경고음: 뚜-뚜-뚜-뚜 4연타 (크고 또렷하게)
+function _wavBeeps(arr, sr, atSec) {
+  [0, 0.24, 0.48, 0.72].forEach(d => {
+    const start = Math.floor((atSec + d) * sr);
+    const dur = 0.20, n = Math.floor(dur * sr);
+    for (let i = 0; i < n; i++) {
+      const t = i / sr;
+      const env = Math.min(1, t / 0.006) * Math.exp(-t * 9);
+      const v = Math.tanh((Math.sin(2 * Math.PI * 1047 * t) + 0.45 * Math.sin(2 * Math.PI * 2094 * t)) * 1.9);
+      _wavAdd(arr, start + i, v * env * 0.92);
+    }
+  });
+}
+
+function _wavEncode(int16, sr) {
+  const n = int16.length;
+  const ab = new ArrayBuffer(44 + n * 2);
+  const dv = new DataView(ab);
+  const put = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
+  put(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); put(8, 'WAVE');
+  put(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true);
+  dv.setUint16(22, 1, true); dv.setUint32(24, sr, true);
+  dv.setUint32(28, sr * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  put(36, 'data'); dv.setUint32(40, n * 2, true);
+  new Int16Array(ab, 44).set(int16);
+  return new Blob([ab], { type: 'audio/wav' });
+}
+
+// isFinal: 마지막 라운드 → 쉬는시간/다음 시작 휘슬 없이 종료 후 끝나는 트랙
+function _trackBuild(roundSecs, breakSecs, isFinal) {
+  // 마지막 라운드는 종료 휘슬이 끝까지 울릴 여유(+2초)를 두고 트랙을 끝낸다
+  const cycle = isFinal ? roundSecs + WHISTLE_END_LEN + 2 : roundSecs + breakSecs;
+  const sr = _trackSampleRate(cycle);
+  const n = Math.ceil(cycle * sr);
+  const arr = new Int16Array(n);
+  // 40Hz 초저역 미세 톤: 사람 귀엔 안 들리지만 스트림이 '완전 무음'이 아니게 해
+  // iOS가 재생 세션을 유지하도록 만든다
+  for (let i = 0; i < n; i++) arr[i] = Math.round(20 * Math.sin(2 * Math.PI * 40 * (i / sr)));
+  _wavWhistle(arr, sr, 0, WHISTLE_START);                      // 라운드 시작 휘슬
+  if (roundSecs > 130) _wavBeeps(arr, sr, roundSecs - 120);    // 2분 경고
+  _wavWhistle(arr, sr, roundSecs, WHISTLE_END);                // 라운드 종료 휘슬
+  return { blob: _wavEncode(arr, sr), cycleSec: cycle };
+}
+
+function _trackEnsureEl() {
+  if (!_trackEl) {
+    _trackEl = document.createElement('audio');
+    _trackEl.preload = 'auto';
+    _trackEl.volume = 1.0;
+    _trackEl.setAttribute('playsinline', '');
+    _trackEl.style.display = 'none';
+    document.body.appendChild(_trackEl);
+    // 전화 수신 등 오디오 인터럽션으로 OS가 멈추면 스스로 되살린다
+    _trackEl.addEventListener('pause', () => {
+      updateTimerDisplay();
+      if (!_trackWanted) return;
+      const p = _liveTimer.phase;
+      if (p !== 'playing' && p !== 'break') return;
+      setTimeout(() => {
+        if (_trackWanted && _trackEl && _trackEl.paused && document.visibilityState === 'visible') {
+          _setPlaybackAudioSession();
+          const pr = _trackEl.play();
+          if (pr && pr.catch) pr.catch(() => { _trackOK = false; _trackWanted = false; updateTimerDisplay(); });
+        }
+      }, 400);
+    });
+    _trackEl.addEventListener('play',  () => { _trackOK = true; updateTimerDisplay(); });
+  }
+  return _trackEl;
+}
+
+// 트랙 준비 (동일 설정이면 재사용). 사용자 제스처 안에서 동기 실행되어야 iOS가 허용.
+function _trackPrepare(roundSecs, breakSecs, isFinal) {
+  if (_trackMeta && _trackMeta.roundSecs === roundSecs
+      && _trackMeta.breakSecs === breakSecs && _trackMeta.isFinal === isFinal && _trackUrl) return;
+  try {
+    const built = _trackBuild(roundSecs, breakSecs, isFinal);
+    if (_trackUrl) { try { URL.revokeObjectURL(_trackUrl); } catch(e){} }
+    _trackUrl = URL.createObjectURL(built.blob);
+    _trackMeta = { roundSecs, breakSecs, isFinal, cycleSec: built.cycleSec };
+    const el = _trackEnsureEl();
+    el.loop = !isFinal;
+    el.src = _trackUrl;
+    el.load();
+  } catch (e) { _trackOK = false; }
+}
+
+// 실제로 재생 중인가 (배지 표시·위치 보정용)
+function _trackActive() { return !!(_trackEl && _trackOK && !_trackEl.paused && _trackMeta); }
+// 사운드를 트랙이 담당하는가 (Web Audio 폴백 억제용 — 재생 요청 직후부터 true)
+function _trackHandlesAudio() { return !!(_trackWanted && _trackEl && _trackMeta); }
+
+// 현재 타이머 상태에 해당하는 트랙 재생 위치(초)
+function _trackExpectedPos() {
+  const lt = _liveTimer;
+  if (!lt.phaseEndAt || !_trackMeta) return null;
+  const rem = (lt.phaseEndAt - Date.now()) / 1000;
+  if (lt.phase === 'playing') return lt.roundSecs - rem;
+  if (lt.phase === 'break')   return lt.roundSecs + (lt.breakSecs - rem);
+  return null;
+}
+
+// posSec 위치부터 재생. play()를 먼저 호출해 제스처 컨텍스트를 잃지 않는다.
+function _trackPlayAt(posSec) {
+  const el = _trackEnsureEl();
+  if (!_trackMeta) return;
+  _trackWanted = true;            // 폴백 억제를 즉시 켠다 (프라미스 확정 전 겹침 방지)
+  _setPlaybackAudioSession();
+  const seek = () => {
+    try {
+      const cyc = _trackMeta.cycleSec;
+      el.currentTime = Math.max(0, Math.min(cyc - 0.05, ((posSec % cyc) + cyc) % cyc));
+    } catch (e) {}
+  };
+  if (el.readyState >= 1) seek();
+  else el.addEventListener('loadedmetadata', seek, { once: true });
+  const p = el.play();
+  if (p && p.catch) p.then(() => { _trackOK = true; _updateMediaSession(); })
+                     .catch(() => { _trackOK = false; _trackWanted = false; updateTimerDisplay(); });
+  else { _trackOK = true; }
+}
+
+function _trackStop() {
+  _trackOK = false; _trackWanted = false;   // 먼저 끈다 → pause 핸들러가 되살리지 않게
+  try { if (_trackEl) { _trackEl.pause(); _trackEl.currentTime = 0; } } catch (e) {}
+}
+
+// 알림음 지점 근처가 아닐 때만 위치 보정 (재생 중인 휘슬이 끊기지 않게)
+function _trackSafeToSeek(pos) {
+  if (!_trackMeta) return false;
+  const marks = [0, _trackMeta.roundSecs];
+  if (_trackMeta.roundSecs > 130) marks.push(_trackMeta.roundSecs - 120);
+  const cyc = _trackMeta.cycleSec;
+  return marks.every(m => {
+    let d = Math.abs(((pos - m) % cyc + cyc) % cyc);
+    if (d > cyc / 2) d = cyc - d;
+    return d > 6;
+  });
+}
+
+// 벽시계와 트랙 재생 위치가 어긋나면(루프 갭 누적 등) 안전 구간에서 보정
+function _trackSync() {
+  if (!_trackActive()) return;
+  const want = _trackExpectedPos();
+  if (want == null) return;
+  const cyc = _trackMeta.cycleSec;
+  const cur = _trackEl.currentTime;
+  let diff = ((want - cur) % cyc + cyc) % cyc;
+  if (diff > cyc / 2) diff -= cyc;
+  if (Math.abs(diff) > 1.5 && _trackSafeToSeek(cur) && _trackSafeToSeek(want)) {
+    try { _trackEl.currentTime = ((want % cyc) + cyc) % cyc; } catch (e) {}
+  }
+}
+
+// ±30초 조정 등으로 남은 시간이 바뀌면 트랙 위치를 즉시 맞춘다
+function _trackSeekToState() {
+  if (!_trackActive()) return;
+  const want = _trackExpectedPos();
+  if (want == null) return;
+  const cyc = _trackMeta.cycleSec;
+  try { _trackEl.currentTime = ((want % cyc) + cyc) % cyc; } catch (e) {}
+}
+
+// 사운드가 꺼진 상태에서 사용자가 배지를 탭 → 현재 위치부터 트랙 재개
+function _trackResumeFromState() {
+  const lt = _liveTimer;
+  if (lt.phase !== 'playing' && lt.phase !== 'break') return;
+  _unlockAudio();
+  _requestWakeLock();
+  _startAudioKeepAlive();
+  const isFinal = lt.phase === 'playing' && (lt.roundIdx + 1 >= lt.numRounds);
+  _trackPrepare(lt.roundSecs, lt.breakSecs, isFinal);
+  const pos = _trackExpectedPos();
+  _trackPlayAt(pos == null ? 0 : pos);
+  _cancelAllArmed();   // 트랙이 담당하므로 Web Audio 예약은 정리
+  updateTimerDisplay();
+}
+
+// 잠금화면에 경기 상태 표시 (백그라운드 재생 중임을 사용자가 인지)
+function _updateMediaSession() {
+  try {
+    if (!('mediaSession' in navigator)) return;
+    const lt = _liveTimer;
+    const title = lt.phase === 'break'
+      ? `쉬는시간 · RD ${lt.roundIdx + 1} 완료`
+      : `RD ${lt.roundIdx + 1} / ${lt.numRounds} 진행 중`;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title, artist: 'kkabi 라운드 타이머', album: '풋살 경기'
+    });
+    navigator.mediaSession.setActionHandler('pause', () => {});
+    navigator.mediaSession.setActionHandler('play', () => {});
+  } catch (e) {}
 }
 
 function _timerFmt(ms) {
@@ -3401,6 +3661,7 @@ function _roundDots(current, total, phase) {
 function resetLiveTimer() {
   if (_liveTimer.interval) clearInterval(_liveTimer.interval);
   _cancelAllArmed();
+  _trackStop();
   _releaseWakeLock();
   _stopAudioKeepAlive();
   _stopLiveTimerPersist();
@@ -3410,11 +3671,23 @@ function resetLiveTimer() {
   updateTimerDisplay();
 }
 
+// 사운드 상태 배너 — 경기 중 가장 중요한 정보라 최상단에 크게 노출
+function _soundBadgeHtml() {
+  if (_trackHandlesAudio()) {
+    return `<div class="snd-badge is-on"><span class="snd-ico">🔊</span>
+      <span>사운드 켜짐 · 화면이 꺼져도 휘슬이 울립니다</span></div>`;
+  }
+  return `<button class="snd-badge is-off" id="lv-snd-on"><span class="snd-ico">🔇</span>
+    <span>사운드 꺼짐 — <u>여기를 탭해서 켜세요</u><br>
+    <span style="font-weight:700;opacity:0.85;">탭하지 않으면 휘슬이 울리지 않습니다</span></span></button>`;
+}
+
 function updateTimerDisplay() {
   const el = $('#lv-timer-body');
   if (!el) return;
 
   const now = Date.now();
+  _trackSync();   // 벽시계와 트랙 재생 위치 정렬 (안전 구간에서만)
   let { phase, roundIdx, numRounds, phaseEndAt, roundSecs, breakSecs } = _liveTimer;
 
   // ── Auto-transition: playing → break or done (alarm at round END)
@@ -3425,22 +3698,28 @@ function updateTimerDisplay() {
       // 예약된 종료 휘슬이 실제로 발화했는지 오디오시계로 결정적 판정:
       //  - 발화함 → 절대 stop하지 말고 참조만 비워 끝까지(4.3초) 울리게 함
       //  - 발화 안 함(ctx suspend로 오디오시계가 뒤처짐/예약 씹힘) → 즉시 크게 재생
-      const endFired = _armedFired(_armedEnd, _armedEndCtxTime);
-      _cancelArmed(_armedWarn);       // 경고음은 이미 지난 시점 → 정리
       _alarmNonAudio(isLast ? `RD ${roundIdx + 1} 종료 · 전체 완료!` : `RD ${roundIdx + 1} 종료 · 쉬는시간`);
-      if (endFired) _releaseArmed(_armedEnd);               // 끝까지 울리게 둠
-      else { _cancelArmed(_armedEnd); playWhistle(WHISTLE_END); }
+      if (_trackHandlesAudio()) {
+        _cancelAllArmed();          // 트랙에 휘슬이 구워져 있음 → 중복 재생 금지
+      } else {
+        const endFired = _armedFired(_armedEnd, _armedEndCtxTime);
+        _cancelArmed(_armedWarn);   // 경고음은 이미 지난 시점 → 정리
+        if (endFired) _releaseArmed(_armedEnd);             // 끝까지 울리게 둠
+        else { _cancelArmed(_armedEnd); playWhistle(WHISTLE_END); }
+      }
       _saveLiveTimerState();
     }
     if (roundIdx + 1 < numRounds) {
       _liveTimer.phase = 'break';
       _liveTimer.phaseEndAt = now + breakSecs * 1000;
       _liveTimer.alerted = false;
-      _armPhaseAudio();               // 다음 라운드 시작 휘슬을 오디오 시계에 예약
+      if (!_trackHandlesAudio()) _armPhaseAudio();   // 폴백: 다음 시작 휘슬 예약
+      _updateMediaSession();
       updateTimerDisplay(); return;
     } else {
       _liveTimer.phase = 'done';
       if (_liveTimer.interval) { clearInterval(_liveTimer.interval); _liveTimer.interval = null; }
+      setTimeout(_trackStop, (WHISTLE_END_LEN + 1.5) * 1000);   // 종료 휘슬이 끝까지 울린 뒤 정지
       _releaseWakeLock();
     }
     phase = _liveTimer.phase;
@@ -3449,21 +3728,33 @@ function updateTimerDisplay() {
   // ── Auto-transition: break → playing (시작 휘슬 한 번)
   if (phase === 'break' && phaseEndAt && now >= phaseEndAt) {
     if (roundIdx + 1 < numRounds) {
-      const startFired = _armedFired(_armedEnd, _armedEndCtxTime);
-      if (startFired) _releaseArmed(_armedEnd);             // 시작 휘슬 끝까지 울리게 둠
-      else { _cancelArmed(_armedEnd); playWhistle(WHISTLE_START); }
-      _cancelArmed(_armedWarn);
+      const trackOn = _trackHandlesAudio();
+      if (trackOn) {
+        _cancelAllArmed();          // 트랙 루프가 시작 휘슬을 이미 재생함
+      } else {
+        const startFired = _armedFired(_armedEnd, _armedEndCtxTime);
+        if (startFired) _releaseArmed(_armedEnd);           // 시작 휘슬 끝까지 울리게 둠
+        else { _cancelArmed(_armedEnd); playWhistle(WHISTLE_START); }
+        _cancelArmed(_armedWarn);
+      }
       _liveTimer.roundIdx = roundIdx + 1;
       _liveTimer.phase = 'playing';
       _liveTimer.phaseEndAt = now + roundSecs * 1000;
       _liveTimer.alerted = false;
       _liveTimer.warned2m = false;
-      _armPhaseAudio();               // 새 라운드 종료 휘슬 + 2분 경고 예약
+      // 마지막 라운드 진입 → 루프 없는 최종 트랙으로 교체(끝난 뒤 헛 휘슬 방지)
+      if (trackOn && _liveTimer.roundIdx + 1 >= numRounds) {
+        _trackPrepare(roundSecs, breakSecs, true);
+        _trackPlayAt(0.95);         // 방금 울린 시작 휘슬 직후부터 이어서
+      }
+      if (!trackOn) _armPhaseAudio();   // 폴백: Web Audio 예약
+      _updateMediaSession();
       updateTimerDisplay(); return;
     } else {
       _liveTimer.phase = 'done';
       if (_liveTimer.interval) { clearInterval(_liveTimer.interval); _liveTimer.interval = null; }
       _cancelAllArmed();
+      _trackStop();
       _releaseWakeLock();
     }
     phase = _liveTimer.phase; roundIdx = _liveTimer.roundIdx;
@@ -3486,7 +3777,11 @@ function updateTimerDisplay() {
         <button class="btn btn-outline" id="lv-t-plus" style="width:38px;height:38px;padding:0;font-size:22px;line-height:1;flex-shrink:0;">+</button>
       </div>
       ${_roundDots(0, numRounds, 'idle')}
-      <button class="btn btn-accent btn-block" id="lv-t-start" style="margin-top:12px;">▶ 경기 시작 (RD 1)</button>`;
+      <button class="btn btn-outline btn-block" id="lv-t-test" style="margin-top:12px;font-size:12px;font-weight:800;">🔊 휘슬 테스트 (경기 전 볼륨 확인)</button>
+      <button class="btn btn-accent btn-block" id="lv-t-start" style="margin-top:8px;">▶ 경기 시작 (RD 1)</button>
+      <div class="timer-foot">▶ 시작을 누르면 <strong>화면 꺼짐 방지 + 백그라운드 휘슬</strong>이 켜집니다<br>
+      화면이 꺼지거나 다른 앱을 써도 휘슬이 울립니다<br>
+      <strong>미디어 볼륨을 최대로</strong> 올려두세요 (무음 모드여도 울림) <span style="opacity:0.55;">· 사운드 v4</span></div>`;
 
   // ── PLAYING
   } else if (phase === 'playing') {
@@ -3494,16 +3789,21 @@ function updateTimerDisplay() {
     // 남은 시간이 2분 위로 돌아오면 경고 재무장 (+30초 등으로 되돌린 경우 다시 울림)
     if (rem > 122000 && _liveTimer.warned2m) {
       _liveTimer.warned2m = false;
-      _armPhaseAudio();   // 2분 경고를 오디오 시계에 다시 예약
+      if (!_trackHandlesAudio()) _armPhaseAudio();   // 폴백: 2분 경고 재예약
     }
     // 2분 남은 시점 — 경고음 + 음성 알림
     // (하한선 없이 rem<=120초면 발동: 백그라운드 탭에서 틱이 밀려도 놓치지 않음)
     if (!_liveTimer.warned2m && rem <= 120000 && rem > 3000) {
       _liveTimer.warned2m = true;
-      // 예약 경고음이 실제로 발화했는지 오디오시계로 결정적 판정
-      const warnFired = _armedFired(_armedWarn, _armedWarnCtxTime);
-      if (warnFired) _releaseArmed(_armedWarn);             // 끝까지 울리게 둠
-      else { _cancelArmed(_armedWarn); _playWarningNow(); } // 폴백: 즉시 재생
+      let warnFired = true;
+      if (_trackHandlesAudio()) {
+        _cancelAllArmed();          // 트랙에 경고음이 구워져 있음 → 중복 금지
+      } else {
+        // 예약 경고음이 실제로 발화했는지 오디오시계로 결정적 판정
+        warnFired = _armedFired(_armedWarn, _armedWarnCtxTime);
+        if (warnFired) _releaseArmed(_armedWarn);             // 끝까지 울리게 둠
+        else { _cancelArmed(_armedWarn); _playWarningNow(); } // 폴백: 즉시 재생
+      }
       setTimeout(() => speak('2분 남았습니다'), warnFired ? 250 : 500);  // TTS는 화면 켜짐 시 베스트에포트
       _saveLiveTimerState();
     }
@@ -3519,24 +3819,26 @@ function updateTimerDisplay() {
         estEnd ? `최종 <strong>${_fmtEndTime(estEnd)}</strong>` : ''
       ].filter(Boolean).join(' · ');
     })() : '';
+    const warnSoon = rem <= 125000 && rem > 118000;
     html = `
-      <div class="timer-phase-label">RD ${roundIdx + 1} / ${numRounds} 진행 중 · ${timeLabel}씩</div>
-      <div class="timer-countdown-row">
-        <div class="timer-big${danger ? ' timer-danger' : ''}">${_timerFmt(rem)}</div>
-        <div class="timer-progress-wrap">
-          <div class="timer-bar"><div class="timer-bar-fill${danger ? ' is-danger' : ''}" style="width:${pct}%"></div></div>
-          <div class="timer-bar-sub">${danger ? '⚡ 곧 종료' : '남은 시간'}</div>
-        </div>
+      ${_soundBadgeHtml()}
+      <div style="text-align:center;margin-bottom:4px;">
+        <span class="timer-chip">RD ${roundIdx + 1} / ${numRounds} 진행 중 · ${timeLabel}씩</span>
       </div>
+      <div class="timer-hero">
+        <div class="th-time${danger ? ' is-danger' : ''}">${_timerFmt(rem)}</div>
+        <div class="th-sub">${danger ? '⚡ 곧 종료 휘슬' : warnSoon ? '🔔 2분 경고' : '남은 시간'}</div>
+      </div>
+      <div class="timer-bar"><div class="timer-bar-fill${danger ? ' is-danger' : ''}" style="width:${pct}%"></div></div>
       ${_roundDots(roundIdx, numRounds, 'playing')}
       ${estLabel ? `<div class="timer-est-end">${estLabel}</div>` : ''}
       <div style="display:flex;gap:6px;align-items:center;margin-top:12px;">
-        <button class="btn btn-outline" id="lv-t-rm30" style="flex:1;font-size:12px;font-weight:800;padding:10px 0;">−30초</button>
-        <button class="btn btn-block" id="lv-t-end" style="flex:2;background:var(--primary);color:#fff;border-radius:10px;font-size:13px;font-weight:800;padding:12px;">⏹ 라운드 종료</button>
-        <button class="btn btn-outline" id="lv-t-rp30" style="flex:1;font-size:12px;font-weight:800;padding:10px 0;">+30초</button>
+        <button class="btn btn-outline" id="lv-t-rm30" style="flex:1;font-size:12px;font-weight:800;padding:12px 0;">−30초</button>
+        <button class="btn btn-block" id="lv-t-end" style="flex:2;background:var(--primary);color:#fff;border-radius:10px;font-size:13px;font-weight:800;padding:14px;">⏹ 라운드 종료</button>
+        <button class="btn btn-outline" id="lv-t-rp30" style="flex:1;font-size:12px;font-weight:800;padding:12px 0;">+30초</button>
       </div>
       <button class="btn btn-ghost btn-sm btn-block" id="lv-t-reset" style="margin-top:4px;font-size:11px;">↺ 초기화</button>
-      <div style="text-align:center;font-size:10.5px;color:var(--text-3);font-weight:700;margin-top:8px;line-height:1.4;">🔆 화면을 켜둔 채로 두면 휘슬·음성이 정확히 울려요<br>(화면이 완전히 꺼지면 소리가 밀릴 수 있어요) <span style="opacity:0.5;">· 사운드 v3</span></div>`;
+      <div class="timer-foot">🔆 화면 꺼짐 방지 작동 중 · 화면이 꺼져도 휘슬은 울립니다 <span style="opacity:0.55;">· 사운드 v4</span></div>`;
 
   // ── BREAK
   } else if (phase === 'break') {
@@ -3555,17 +3857,20 @@ function updateTimerDisplay() {
       ].filter(Boolean).join(' · ');
     })() : '';
     html = `
-      <div class="timer-phase-label is-break" style="font-size:13px;">⏸ 쉬는시간 · RD ${roundIdx + 1} 완료</div>
-      <div class="timer-countdown-row">
-        <div class="timer-big is-break">${_timerFmt(rem)}</div>
-        <div class="timer-progress-wrap">
-          <div class="timer-bar"><div class="timer-bar-fill is-break" style="width:${pct}%"></div></div>
-          <div class="timer-bar-sub" style="color:var(--warn);">${nextLabel}</div>
-        </div>
+      ${_soundBadgeHtml()}
+      <div style="text-align:center;margin-bottom:4px;">
+        <span class="timer-chip is-break">⏸ 쉬는시간 · RD ${roundIdx + 1} 완료</span>
       </div>
+      <div class="timer-hero">
+        <div class="th-time is-break">${_timerFmt(rem)}</div>
+        <div class="th-sub" style="color:var(--warn);">${nextLabel}</div>
+      </div>
+      <div class="timer-bar"><div class="timer-bar-fill is-break" style="width:${pct}%"></div></div>
       ${_roundDots(roundIdx, numRounds, 'break')}
       ${estLabelB ? `<div class="timer-est-end">${estLabelB}</div>` : ''}
-      <button class="btn btn-outline btn-block" id="lv-t-skip-break" style="margin-top:10px;font-size:12px;font-weight:700;">▶ 쉬는시간 건너뛰기 (즉시 다음 라운드)</button>`;
+      <button class="btn btn-outline btn-block" id="lv-t-skip-break" style="margin-top:10px;font-size:12px;font-weight:700;padding:13px 0;">▶ 쉬는시간 건너뛰기 (즉시 다음 라운드)</button>
+      <button class="btn btn-ghost btn-sm btn-block" id="lv-t-reset" style="margin-top:4px;font-size:11px;">↺ 초기화</button>
+      <div class="timer-foot">쉬는시간이 끝나면 시작 휘슬이 자동으로 울립니다 <span style="opacity:0.55;">· 사운드 v4</span></div>`;
 
   // ── DONE
   } else {
@@ -3585,19 +3890,28 @@ function updateTimerDisplay() {
   if (onMinus) onMinus.onclick = () => { _unlockAudio(); _liveTimer.roundSecs = Math.max(60, _liveTimer.roundSecs - 30); updateTimerDisplay(); };
   const onPlus = $('#lv-t-plus');
   if (onPlus) onPlus.onclick = () => { _unlockAudio(); _liveTimer.roundSecs = Math.min(1800, _liveTimer.roundSecs + 30); updateTimerDisplay(); };
-  // ±30s mid-round adjustment
+  // 경기 전 사운드 점검용 휘슬 테스트
+  const onTest = $('#lv-t-test');
+  if (onTest) onTest.onclick = () => { _unlockAudio(); playWhistle(WHISTLE_END); };
+  // 사운드 꺼짐 배지 탭 → 현재 시점부터 트랙 재개
+  const onSndOn = $('#lv-snd-on');
+  if (onSndOn) onSndOn.onclick = () => { _trackResumeFromState(); };
+
+  // ±30s mid-round adjustment — 트랙은 위치 이동(seek)으로 따라간다
   const onRm30 = $('#lv-t-rm30');
   if (onRm30) onRm30.onclick = () => {
     _unlockAudio();
     _liveTimer.phaseEndAt = Math.max(Date.now() + 5000, _liveTimer.phaseEndAt - 30000);
-    _armPhaseAudio();               // 종료 시각 변경 → 예약 사운드 다시 맞춤
+    _trackSeekToState();
+    if (!_trackHandlesAudio()) _armPhaseAudio();
     updateTimerDisplay();
   };
   const onRp30 = $('#lv-t-rp30');
   if (onRp30) onRp30.onclick = () => {
     _unlockAudio();
     _liveTimer.phaseEndAt += 30000;
-    _armPhaseAudio();               // 종료 시각 변경 → 예약 사운드 다시 맞춤
+    _trackSeekToState();
+    if (!_trackHandlesAudio()) _armPhaseAudio();
     updateTimerDisplay();
   };
   const onStart = $('#lv-t-start');
@@ -3606,13 +3920,20 @@ function updateTimerDisplay() {
     _primeSpeech();                 // 제스처 시점에 TTS 예열
     _startAudioKeepAlive();
     _requestWakeLock();             // 화면 꺼짐 방지(경기 내내 유지)
-    playWhistle(WHISTLE_START);     // 시작 휘슬 한 번
     _liveTimer.phase = 'playing';
     _liveTimer.roundIdx = 0;
     _liveTimer.phaseEndAt = Date.now() + _liveTimer.roundSecs * 1000;
     _liveTimer.alerted = false;
     _liveTimer.warned2m = false;
-    _armPhaseAudio();               // 종료 휘슬 + 2분 경고 예약
+    // 트랙 재생 시작 — 시작 휘슬이 트랙 t=0에 구워져 있다
+    _trackPrepare(_liveTimer.roundSecs, _liveTimer.breakSecs, _liveTimer.numRounds <= 1);
+    _trackPlayAt(0);
+    _updateMediaSession();
+    // 트랙이 막히면(자동재생 차단) Web Audio 폴백
+    // 트랙 재생이 거부된 경우에만 폴백 (_trackWanted가 false면 play()가 실패한 것)
+    setTimeout(() => {
+      if (!_trackActive() && !_trackWanted) { playWhistle(WHISTLE_START); _armPhaseAudio(); }
+    }, 400);
     if (!_liveTimer.interval) _liveTimer.interval = setInterval(updateTimerDisplay, 400);
     updateTimerDisplay();
     _saveLiveTimerState(); _startLiveTimerPersist();
@@ -3623,19 +3944,24 @@ function updateTimerDisplay() {
     const ri = _liveTimer.roundIdx;
     const nr = _liveTimer.numRounds;
     const isLast = ri >= nr - 1;
+    const trackOn = _trackHandlesAudio();
     _cancelAllArmed();              // 예약된 사운드 취소 (수동으로 종료하므로)
-    // 수동 종료도 알람 발동
-    playAlarm(isLast ? `RD ${ri + 1} 종료 · 전체 완료!` : `RD ${ri + 1} 종료 · 쉬는시간`);
+    _alarmNonAudio(isLast ? `RD ${ri + 1} 종료 · 전체 완료!` : `RD ${ri + 1} 종료 · 쉬는시간`);
     if (isLast) {
       _liveTimer.phase = 'done';
       if (_liveTimer.interval) { clearInterval(_liveTimer.interval); _liveTimer.interval = null; }
+      if (trackOn) { _trackPlayAt(_liveTimer.roundSecs); setTimeout(_trackStop, (WHISTLE_END_LEN + 1.5) * 1000); }
+      else playWhistle(WHISTLE_END);
       _releaseWakeLock();
     } else {
       _liveTimer.phase = 'break';
       _liveTimer.phaseEndAt = Date.now() + _liveTimer.breakSecs * 1000;
       _liveTimer.alerted = false;
-      _armPhaseAudio();            // 다음 라운드 시작 휘슬 예약
+      // 트랙의 '종료 휘슬' 지점으로 점프 → 휘슬 재생 후 쉬는시간이 이어짐
+      if (trackOn) _trackPlayAt(_liveTimer.roundSecs);
+      else { playWhistle(WHISTLE_END); _armPhaseAudio(); }
     }
+    _updateMediaSession();
     _saveLiveTimerState();
     updateTimerDisplay();
   };
@@ -3643,14 +3969,23 @@ function updateTimerDisplay() {
   const onSkipBreak = $('#lv-t-skip-break');
   if (onSkipBreak) onSkipBreak.onclick = () => {
     _unlockAudio();
+    const trackOn = _trackHandlesAudio();
     _cancelAllArmed();
-    playWhistle(WHISTLE_START);     // 시작 휘슬 한 번
     _liveTimer.roundIdx = _liveTimer.roundIdx + 1;
     _liveTimer.phase = 'playing';
     _liveTimer.phaseEndAt = Date.now() + _liveTimer.roundSecs * 1000;
     _liveTimer.alerted = false;
     _liveTimer.warned2m = false;
-    _armPhaseAudio();               // 새 라운드 종료 휘슬 + 2분 경고 예약
+    if (trackOn) {
+      // 마지막 라운드면 루프 없는 최종 트랙으로 교체
+      if (_liveTimer.roundIdx + 1 >= _liveTimer.numRounds)
+        _trackPrepare(_liveTimer.roundSecs, _liveTimer.breakSecs, true);
+      _trackPlayAt(0);              // t=0 → 시작 휘슬
+    } else {
+      playWhistle(WHISTLE_START);
+      _armPhaseAudio();
+    }
+    _updateMediaSession();
     updateTimerDisplay();
     _saveLiveTimerState();
   };
