@@ -3005,6 +3005,7 @@ async function cancelVote(matchId, voterId) {
    TEAM BUILDER
    =========================================================== */
 let _tbActive = null;
+let _roundsMismatchWarned = false;   // 편성표 불일치 경고를 한 번만 띄우기 위한 플래그
 
 /* ── Audio context (singleton, unlocked on first user gesture) ── */
 let _audioCtx  = null;
@@ -4299,9 +4300,15 @@ function renderTeamBuilderPage() {
       const mid = state.currentMatchId;
       await db.ref(`matches/${mid}/status`).set('in_progress');
       const cur = state.matches[mid];
-      if (!cur || !cur.rounds || !cur.rounds.length) {
-        const rounds = generateRounds(_tbActive.length);
-        await db.ref(`matches/${mid}/rounds`).set(rounds);
+      const teamN = _tbActive.length;
+      const curRounds = cur && cur.rounds;
+      // 팀 수가 바뀌었으면 편성표를 다시 만든다 (2팀→3팀인데 C가 안 나오던 문제)
+      if (!curRounds || !curRounds.length || !roundsMatchTeamCount(curRounds, teamN)) {
+        if (roundsHaveResults(curRounds) &&
+            !confirm(`팀 수가 ${teamN}팀으로 바뀌어 라운드 편성을 다시 만듭니다.\n이미 입력된 라운드 결과는 초기화됩니다. 계속할까요?`)) {
+          navigate('live'); return;
+        }
+        await db.ref(`matches/${mid}/rounds`).set(generateRounds(teamN));
       }
       navigate('live');
     } catch (e) {
@@ -4555,15 +4562,33 @@ function calculateTeamScore(members) {
   const adjusted = members.map(p => isGuestPlayer(p) ? avgScore : calcScore(p));
   return Math.round(adjusted.reduce((a, b) => a + b, 0) / adjusted.length * 10) / 10;
 }
+// 팀 수에 맞는 9라운드 편성
+//  2팀 → A vs B 9번
+//  3팀 → A-B, B-C, C-A 를 3바퀴 (각 팀 6경기, 매 라운드 한 팀 휴식)
 function generateRounds(teamN) {
   const rounds = [];
-  if (teamN === 2) {
-    for (let i = 1; i <= 9; i++) rounds.push({ id: i, t1: 0, t2: 1, winner: null });
-  } else {
+  if (teamN >= 3) {
     const pairs = [[0,1],[1,2],[2,0]];
     for (let i = 1; i <= 9; i++) rounds.push({ id: i, t1: pairs[(i-1)%3][0], t2: pairs[(i-1)%3][1], winner: null });
+  } else {
+    for (let i = 1; i <= 9; i++) rounds.push({ id: i, t1: 0, t2: 1, winner: null });
   }
   return rounds;
+}
+
+// 편성표가 실제 팀 수와 맞는지 검사 (2팀 스케줄에 3팀이면 C가 영영 안 나옴)
+function roundsMatchTeamCount(rounds, teamN) {
+  if (!Array.isArray(rounds) || !rounds.length) return false;
+  const used = new Set();
+  rounds.forEach(r => { used.add(r.t1); used.add(r.t2); });
+  const need = Math.min(teamN, 3);
+  for (let i = 0; i < need; i++) if (!used.has(i)) return false;   // 안 쓰인 팀이 있으면 불일치
+  for (const t of used) if (t >= need) return false;               // 없는 팀을 참조해도 불일치
+  return true;
+}
+
+function roundsHaveResults(rounds) {
+  return Array.isArray(rounds) && rounds.some(r => r && r.winner);
 }
 
 /* -------------------------------------------------------
@@ -4709,9 +4734,21 @@ function renderLivePage() {
     $('#lv-home').onclick = () => navigate('home');
     return;
   }
+  const teamN = (m.teams || []).length;
   if (!m.rounds || !m.rounds.length) {
-    db.ref(`matches/${activeId}/rounds`).set(generateRounds((m.teams || []).length));
+    db.ref(`matches/${activeId}/rounds`).set(generateRounds(teamN));
     return;
+  }
+  // 편성표가 팀 수와 어긋나면(예: 2팀 편성표인데 3팀) 결과가 없을 때 자동 교정
+  if (!roundsMatchTeamCount(m.rounds, teamN)) {
+    if (!roundsHaveResults(m.rounds)) {
+      db.ref(`matches/${activeId}/rounds`).set(generateRounds(teamN));
+      return;
+    }
+    if (!_roundsMismatchWarned) {
+      _roundsMismatchWarned = true;
+      toast(`편성표가 ${teamN}팀과 맞지 않아요. 팀 편성에서 '경기 시작'을 다시 눌러 재편성하세요`, 'err');
+    }
   }
 
   const stand = computeStandings(m);
@@ -4831,15 +4868,24 @@ async function recordRound(matchId, rid, winner) {
   }
 }
 
+// 라운드 결과 → 팀별 승/무/패/승점 집계.
+// 편성표가 팀 수와 어긋나 없는 팀(예: 2팀인데 t=2)을 참조해도 크래시하지 않는다.
+function tallyRounds(teamCount, rounds) {
+  const stand = Array.from({ length: teamCount }, () => ({ w: 0, d: 0, l: 0, p: 0 }));
+  (rounds || []).forEach(r => {
+    if (!r || !r.winner) return;
+    const a = stand[r.t1], b = stand[r.t2];
+    if (!a || !b) return;                       // 존재하지 않는 팀 참조는 건너뜀
+    if (r.winner === 't1')      { a.w++; a.p += 3; b.l++; }
+    else if (r.winner === 't2') { b.w++; b.p += 3; a.l++; }
+    else                        { a.d++; a.p += 1; b.d++; b.p += 1; }
+  });
+  return stand;
+}
+
 function computeStandings(m) {
   const teams = m.teams || [];
-  const stand = teams.map((_, i) => ({ id: i+1, w: 0, d: 0, l: 0, p: 0 }));
-  (m.rounds || []).forEach(r => {
-    if (!r.winner) return;
-    if (r.winner === 't1') { stand[r.t1].w++; stand[r.t1].p += 3; stand[r.t2].l++; }
-    else if (r.winner === 't2') { stand[r.t2].w++; stand[r.t2].p += 3; stand[r.t1].l++; }
-    else { stand[r.t1].d++; stand[r.t1].p += 1; stand[r.t2].d++; stand[r.t2].p += 1; }
-  });
+  const stand = tallyRounds(teams.length, m.rounds).map((s, i) => ({ id: i + 1, ...s }));
   return [...stand].sort((a, b) => b.p - a.p);
 }
 
@@ -5174,16 +5220,11 @@ function _computeStats(matches) {
   const stats = {};
   matches.forEach(m => {
     if (!m.teams || !m.rounds) return;
-    const stand = m.teams.map(() => ({ w: 0, d: 0, l: 0, p: 0 }));
-    m.rounds.forEach(r => {
-      if (!r.winner) return;
-      if (r.winner === 't1') { stand[r.t1].w++; stand[r.t1].p += 3; stand[r.t2].l++; }
-      else if (r.winner === 't2') { stand[r.t2].w++; stand[r.t2].p += 3; stand[r.t1].l++; }
-      else { stand[r.t1].d++; stand[r.t1].p++; stand[r.t2].d++; stand[r.t2].p++; }
-    });
+    const stand = tallyRounds(m.teams.length, m.rounds);
     const ranks = [...stand].map((s, i) => ({ ...s, ti: i })).sort((a, b) => b.p - a.p);
     ranks.forEach((teamStat, rankIdx) => {
       const team = m.teams[teamStat.ti];
+      if (!team) return;
       (team.members || []).forEach(p => {
         const key = (p.name || '').trim().toLowerCase();
         if (!key || isGuestPlayer(p)) return;
@@ -5207,16 +5248,11 @@ function renderLeaderboard(archived, containerId, allArchived) {
   const stats = {};
   archived.forEach(m => {
     if (!m.teams || !m.rounds) return;
-    const stand = m.teams.map((_, i) => ({ w: 0, d: 0, l: 0, p: 0 }));
-    m.rounds.forEach(r => {
-      if (!r.winner) return;
-      if (r.winner === 't1') { stand[r.t1].w++; stand[r.t1].p += 3; stand[r.t2].l++; }
-      else if (r.winner === 't2') { stand[r.t2].w++; stand[r.t2].p += 3; stand[r.t1].l++; }
-      else { stand[r.t1].d++; stand[r.t1].p++; stand[r.t2].d++; stand[r.t2].p++; }
-    });
+    const stand = tallyRounds(m.teams.length, m.rounds);
     const ranks = [...stand].map((s, i) => ({ ...s, ti: i })).sort((a, b) => b.p - a.p);
     ranks.forEach((teamStat, rankIdx) => {
       const team = m.teams[teamStat.ti];
+      if (!team) return;
       (team.members || []).forEach(p => {
         const nameKey = (p.name || '').trim().toLowerCase();
         if (!nameKey || isGuestPlayer(p)) return;
