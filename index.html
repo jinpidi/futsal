@@ -1156,24 +1156,44 @@
     border-radius: 10px;
     transition: background .12s;
   }
-  .lb-sort-btn {
-    margin-left: 4px;
-    font-size: 8.5px;
-    font-weight: 800;
-    line-height: 1;
-    padding: 3px 7px;
+  /* ── 파워 랭킹 범위 토글 (이번 분기 ↔ 누적) — 클릭/스와이프 */
+  .lb-scope {
+    position: relative;
+    display: inline-flex;
+    background: var(--surface-3);
+    border-radius: 9px;
+    padding: 2px;
+    gap: 0;
+    touch-action: pan-y;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .lb-scope-thumb {
+    position: absolute; top: 2px; bottom: 2px; left: 2px;
     border-radius: 7px;
+    background: var(--accent);
+    transition: transform .22s cubic-bezier(.4,0,.2,1), width .22s cubic-bezier(.4,0,.2,1);
+    pointer-events: none;
+  }
+  .lb-scope-btn {
+    position: relative; z-index: 1;
+    border: none; background: none; cursor: pointer;
+    font-size: 10px; font-weight: 800; letter-spacing: -0.01em;
+    padding: 3px 9px; border-radius: 7px;
+    color: var(--text-2);
+    transition: color .18s;
+    white-space: nowrap;
+  }
+  .lb-scope-btn.active { color: #fff; }
+  /* 비교 기준 라벨 (전 분기 / 이번 분기) */
+  .lb-cmp-head {
+    margin-left: 4px;
+    font-size: 8.5px; font-weight: 800; line-height: 1;
+    padding: 3px 6px; border-radius: 6px;
     border: 1px solid var(--border-2);
     background: var(--surface);
-    color: var(--text-2);
-    cursor: pointer;
-    letter-spacing: 0;
-    text-transform: none;
-  }
-  .lb-sort-btn.cum {
-    background: var(--text);
-    color: var(--bg);
-    border-color: var(--text);
+    color: var(--text-3);
+    letter-spacing: 0; text-transform: none;
   }
   .lb-cum-badge {
     flex-shrink: 0;
@@ -1894,7 +1914,7 @@ let state = {
   historyExpanded: false,
   pmPastExpanded: false,
   expandedMatches: {},
-  lbSort: 'quarter',
+  lbScope: 'quarter',   // 파워 랭킹 범위: 'quarter'(이번 분기) | 'cum'(누적)
   adminSort: localStorage.getItem('admin_sort') || 'name',
   adminPosFilter: localStorage.getItem('admin_pos_filter') || 'all',
   unsubscribePlayers: null,
@@ -5124,6 +5144,12 @@ function renderRecordsPage() {
     : archived.filter(m => m.quarter === archQ);
   const archLabel = archQ === 'all' ? '전체 누적' : (abbrevQLabel(quarters[archQ]?.label) || archQ);
 
+  // ── 파워 랭킹 범위 토글: 이번 분기 / 누적
+  const lbScope = state.lbScope === 'cum' ? 'cum' : 'quarter';
+  // 직전 분기 = 가장 최근에 마감된 분기 (qEntries는 closedAt 내림차순)
+  const prevQId = qEntries[0] ? qEntries[0][0] : null;
+  const prevQMatches = prevQId ? archived.filter(m => m.quarter === prevQId) : [];
+
   root.innerHTML = `
     <div class="page-header">
       <div class="page-header-left"><h2 class="page-title">Records</h2><div class="page-subtitle">파워 랭킹 · 경기 기록</div></div>
@@ -5137,7 +5163,11 @@ function renderRecordsPage() {
       <div class="rec-card-header">
         <div style="display:flex;align-items:center;gap:8px;">
           <span class="section-title" style="margin:0;">파워 랭킹</span>
-          <span class="q-current-badge">현재 분기</span>
+          <div class="lb-scope" id="lb-scope">
+            <span class="lb-scope-thumb" id="lb-scope-thumb"></span>
+            <button class="lb-scope-btn${lbScope === 'quarter' ? ' active' : ''}" data-scope="quarter">이번 분기</button>
+            <button class="lb-scope-btn${lbScope === 'cum' ? ' active' : ''}" data-scope="cum">누적</button>
+          </div>
         </div>
         <button class="lb-info-btn" id="rec-rank-info" title="순위 산정 기준">?</button>
       </div>
@@ -5202,8 +5232,48 @@ function renderRecordsPage() {
   // history toggle
   $('#rec-history-toggle').onclick = () => { state.historyExpanded = !state.historyExpanded; renderRecordsPage(); };
 
-  // render current ranking
-  renderLeaderboard(currentMatches, '#rec-leaderboard', archived);
+  // ── 범위 토글 (클릭 + 좌우 스와이프)
+  const scopeBox = $('#lb-scope');
+  if (scopeBox) {
+    const setScope = (v) => {
+      if (v !== 'quarter' && v !== 'cum') return;
+      if (state.lbScope === v) return;
+      state.lbScope = v;
+      renderRecordsPage();
+    };
+    scopeBox.querySelectorAll('.lb-scope-btn').forEach(b => {
+      b.onclick = () => setScope(b.dataset.scope);
+    });
+    // 스와이프: 왼→오른쪽이면 누적, 오른→왼쪽이면 이번 분기
+    let sx = null;
+    scopeBox.addEventListener('touchstart', e => { sx = e.touches[0].clientX; }, { passive: true });
+    scopeBox.addEventListener('touchend', e => {
+      if (sx == null) return;
+      const dx = e.changedTouches[0].clientX - sx;
+      sx = null;
+      if (Math.abs(dx) < 24) return;
+      setScope(dx < 0 ? 'cum' : 'quarter');
+    }, { passive: true });
+    // 선택된 칸 위로 하이라이트 이동
+    const moveThumb = () => {
+      const thumb = $('#lb-scope-thumb');
+      const active = scopeBox.querySelector('.lb-scope-btn.active');
+      if (!thumb || !active) return;
+      thumb.style.width = active.offsetWidth + 'px';
+      thumb.style.transform = `translateX(${active.offsetLeft - 2}px)`;
+    };
+    moveThumb();
+    requestAnimationFrame(moveThumb);   // 폰트 로드 후 폭 재계산
+  }
+
+  // render current ranking — 범위에 따라 대상/비교 기준이 달라진다
+  renderLeaderboard(
+    lbScope === 'cum' ? archived : currentMatches,
+    '#rec-leaderboard',
+    lbScope === 'cum'
+      ? { compareMatches: currentMatches, compareLabel: '이번 분기' }
+      : { compareMatches: prevQMatches,   compareLabel: '전 분기' }
+  );
 
   // render archive ranking if open
   if (hasQuarters && state.archiveExpanded) {
@@ -5244,7 +5314,9 @@ function _computeStats(matches) {
   return arr;
 }
 
-function renderLeaderboard(archived, containerId, allArchived) {
+// opts: { compareMatches, compareLabel } — 각 선수 옆에 비교 기준 순위/변동을 표시
+function renderLeaderboard(archived, containerId, opts) {
+  opts = opts || {};
   const stats = {};
   archived.forEach(m => {
     if (!m.teams || !m.rounds) return;
@@ -5284,11 +5356,13 @@ function renderLeaderboard(archived, containerId, allArchived) {
     s.rank = rank;
   });
 
-  // cumulative rank map: name.lower → rank number
+  // 비교 기준 순위 맵: name.lower → rank
   const cumRankMap = {};
-  const showCum = allArchived && allArchived.length > 0;
+  const cmpMatches = opts.compareMatches || null;
+  const cmpLabel = opts.compareLabel || '';
+  const showCum = !!(cmpMatches && cmpMatches.length);
   if (showCum) {
-    _computeStats(allArchived).forEach(s => { cumRankMap[s.name.toLowerCase()] = s.rank; });
+    _computeStats(cmpMatches).forEach(s => { cumRankMap[s.name.toLowerCase()] = s.rank; });
   }
 
   const root = $(containerId || '#rec-leaderboard');
@@ -5297,21 +5371,13 @@ function renderLeaderboard(archived, containerId, allArchived) {
     root.innerHTML = `<div class="empty" style="padding:20px;font-size:12px;">아직 기록된 경기가 없어요</div>`;
     return;
   }
-  // 정렬 모드: 분기순(기본) / 누적순
-  const sortByCum = showCum && state.lbSort === 'cum';
-  const displayArr = sortByCum
-    ? [...arr].sort((a, b) => {
-        const ca = cumRankMap[a.name.toLowerCase()] || 9999;
-        const cb = cumRankMap[b.name.toLowerCase()] || 9999;
-        return ca !== cb ? ca - cb : a.rank - b.rank;
-      })
-    : arr;
+  const displayArr = arr;
 
   root.innerHTML = `
     <div class="lb-ranking-wrap">
       <div class="lb-grid-row lb-grid-header">
         <span></span>
-        <span>선수${showCum ? ` <button class="lb-sort-btn${sortByCum ? ' cum' : ''}" id="lb-sort-toggle">${sortByCum ? '누적순 ⇅' : '분기순 ⇅'}</button>` : ''}</span>
+        <span>선수${showCum && cmpLabel ? ` <span class="lb-cmp-head">${cmpLabel}</span>` : ''}</span>
         <span style="justify-content:flex-end;">전적</span>
         <span style="justify-content:flex-end;">승률</span>
         <span style="justify-content:center;font-size:9px;">🏆</span>
@@ -5349,13 +5415,6 @@ function renderLeaderboard(archived, containerId, allArchived) {
     </div>
   `;
 
-  const sortBtn = root.querySelector('#lb-sort-toggle');
-  if (sortBtn) {
-    sortBtn.onclick = () => {
-      state.lbSort = state.lbSort === 'cum' ? 'quarter' : 'cum';
-      renderLeaderboard(archived, containerId, allArchived);
-    };
-  }
 }
 
 function renderHistoryList(archived) {
