@@ -1237,6 +1237,9 @@
   }
   .lb-name-cell { min-width: 0; display: flex; align-items: center; gap: 0; }
   .lb-player-name { font-weight: 800; font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1; }
+  /* 탭하면 팀 케미가 열린다는 힌트 */
+  .lb-chem-link { cursor: pointer; border-bottom: 1px dashed var(--border-2); padding-bottom: 1px; }
+  .lb-chem-link:active { color: var(--accent-2); }
   .lb-record-cell { font-size: 9.5px; color: var(--text-2); font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; letter-spacing: -0.02em; }
   .lb-pts-cell { display: flex; align-items: baseline; justify-content: flex-end; gap: 0; }
   .lb-pts-main { font-weight: 900; color: var(--text); font-size: 13px; line-height: 1; font-variant-numeric: tabular-nums; }
@@ -1917,6 +1920,7 @@ let state = {
   pmPastExpanded: false,
   expandedMatches: {},
   lbScope: 'quarter',   // 파워 랭킹 범위: 'quarter'(이번 분기) | 'cum'(누적)
+  chemSort: 'desc',     // 팀 케미 정렬: 'desc'(많이 뛴 순) | 'asc'(적게 뛴 순)
   adminSort: localStorage.getItem('admin_sort') || 'name',
   adminPosFilter: localStorage.getItem('admin_pos_filter') || 'all',
   unsubscribePlayers: null,
@@ -4135,7 +4139,7 @@ function renderTeamBuilderPage() {
     <div class="tb-footer">
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-back-recruiting" title="모집중으로 되돌리기">← 모집중</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-add-guest"><span class="bn-ic">${svgRaw('plus')}</span>Guest</button>` : ''}
-      ${state.isAdmin ? `<button class="btn btn-outline" id="tb-last-minute"><span class="bn-ic">${svgRaw('users')}</span>출석 변경</button>` : ''}
+      ${state.isAdmin ? `<button class="btn btn-outline" id="tb-last-minute"><span class="bn-ic">${svgRaw('users')}</span>명단 편집</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-outline" id="tb-save-plan">편성 저장</button>` : ''}
       ${state.isAdmin ? `<button class="btn btn-accent" id="tb-start-game">경기 시작</button>` : ''}
     </div>
@@ -4266,40 +4270,86 @@ function renderTeamBuilderPage() {
       if (!state.isAdmin) return;
       _tbActive = readTeamsFromDOM(_tbActive);
       const currentIds = new Set(_tbActive.flatMap(t => (t.members || []).filter(p => !isGuestPlayer(p)).map(p => p.id)));
-      const allPlayers = Object.values(state.players || {}).sort((a, b) => (a.name||'').localeCompare(b.name||'', 'ko-KR'));
+      // 투표 현황을 같이 보여준다 — 노쇼(참석 투표했는데 빠짐) / 현장합류(투표 안 했는데 참)를 바로 구분
+      const votes = (state.matches[state.currentMatchId] || {}).votes || {};
+      const voteOf = pid => (votes[pid] || {}).status || null;
+      // key를 id로 삼는다 (저장 레코드에 id 필드가 빠져 있어도 안전)
+      const allPlayers = Object.entries(state.players || {})
+        .map(([pid, p]) => ({ ...p, id: p.id || pid }))
+        .sort((a, b) => {
+          const rank = p => voteOf(p.id) === 'attend' ? 0 : voteOf(p.id) ? 2 : 1;   // 참석 → 미투표 → 불참
+          return rank(a) - rank(b) || (a.name||'').localeCompare(b.name||'', 'ko-KR');
+        });
+      const guestCount = _tbActive.flatMap(t => (t.members || []).filter(isGuestPlayer)).length;
 
       showModal(`
-        <h3 style="margin-bottom:4px;">출결 조정</h3>
-        <div style="font-size:11.5px;color:var(--text-2);margin-bottom:14px;font-weight:600;">팀에 포함할 선수를 선택/해제하세요</div>
+        <h3 style="margin-bottom:4px;">명단 편집</h3>
+        <div style="font-size:11.5px;color:var(--text-2);margin-bottom:12px;font-weight:600;line-height:1.5;">
+          노쇼는 빼고, 현장 합류는 추가하세요.<br>
+          <span style="color:var(--text-3);">초록 = 투표로 참석한 선수</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;">
+          <span style="font-size:11.5px;font-weight:800;color:var(--text-2);">현재 명단</span>
+          <span style="font-size:13px;font-weight:900;color:var(--accent-2);"><span id="lm-count">${currentIds.size}</span>명${guestCount ? ` <span style="font-size:10px;font-weight:700;color:var(--text-3);">+ Guest ${guestCount}</span>` : ''}</span>
+        </div>
         <div class="mm-player-grid" id="lm-grid">
-          ${allPlayers.map(p => `
-            <button class="mm-pick-btn ${currentIds.has(p.id) ? 'mm-ta' : ''}" data-pid="${p.id}" data-pname="${escapeHtml(p.name)}">
-              <span class="mpb-badge">${currentIds.has(p.id) ? '포함' : '　'}</span>
+          ${allPlayers.map(p => {
+            const v = voteOf(p.id);
+            const on = currentIds.has(p.id);
+            const mark = v === 'attend' ? '참석' : v ? '불참' : '';
+            return `
+            <button class="mm-pick-btn ${on ? 'mm-ta' : ''}" data-pid="${p.id}" data-pname="${escapeHtml(p.name)}"
+                    style="${v === 'attend' ? 'box-shadow:inset 0 0 0 1.5px var(--accent);' : ''}">
+              <span class="mpb-badge">${on ? '포함' : (mark || '　')}</span>
               <span>${escapeHtml(p.name)}</span>
-            </button>
-          `).join('')}
+            </button>`;
+          }).join('')}
         </div>
         <div style="height:1px;background:var(--border);margin:12px 0;"></div>
+        <button class="btn btn-outline btn-block btn-sm" id="lm-guest" style="margin-bottom:8px;">+ Guest 추가 (명단에 없는 사람)</button>
         <button class="btn btn-accent btn-block" id="lm-apply">적용</button>
         <button class="btn btn-ghost btn-sm btn-block" data-modal-close style="margin-top:6px;">취소</button>
       `);
 
       const selected = new Set(currentIds);
+      const syncCount = () => {
+        const c = $('#lm-count');
+        if (c) c.textContent = selected.size;
+      };
 
       document.querySelectorAll('#lm-grid .mm-pick-btn').forEach(btn => {
         btn.onclick = () => {
           const pid = btn.dataset.pid;
+          const v = voteOf(pid);
+          const offLabel = v === 'attend' ? '참석' : v ? '불참' : '　';
           if (selected.has(pid)) {
             selected.delete(pid);
             btn.classList.remove('mm-ta');
-            btn.querySelector('.mpb-badge').textContent = '　';
+            btn.querySelector('.mpb-badge').textContent = offLabel;
           } else {
             selected.add(pid);
             btn.classList.add('mm-ta');
             btn.querySelector('.mpb-badge').textContent = '포함';
           }
+          syncCount();
         };
       });
+
+      // 명단에 없는 사람(게스트)을 이 화면에서 바로 추가
+      $('#lm-guest').onclick = () => {
+        closeModal();
+        openGuestHostPickerModal((guestName) => {
+          const g = guestPlayerWithId('guest_' + uid(), guestName);
+          let smallest = 0;
+          _tbActive.forEach((t, i) => {
+            if ((t.members || []).length < (_tbActive[smallest].members || []).length) smallest = i;
+          });
+          if (!_tbActive[smallest].members) _tbActive[smallest].members = [];
+          _tbActive[smallest].members.push(g);
+          paint();
+          toast(`${guestName} 추가됨`, 'ok');
+        });
+      };
 
       $('#lm-apply').onclick = () => {
         closeModal();
@@ -5159,10 +5209,23 @@ function openCloseQuarterModal() {
     toast('마감할 완료 경기가 없어요', 'err');
     return;
   }
-  const d = new Date();
-  const q = Math.ceil((d.getMonth() + 1) / 3);
-  const suggestedId = `${d.getFullYear()}-Q${q}`;
-  const suggestedLabel = `${d.getFullYear()}년 ${q}분기`;
+  // 제안 분기는 '오늘'이 아니라 '마감할 경기들이 실제로 치러진 시점'에서 뽑는다.
+  // (예: 10월 초에 7~9월 경기를 마감하면 4분기가 아니라 3분기로 제안되어야 한다)
+  const qKeyOf = (ds) => {
+    const dd = new Date(ds);
+    if (isNaN(dd)) return null;
+    return `${dd.getFullYear()}-Q${Math.ceil((dd.getMonth() + 1) / 3)}`;
+  };
+  const tally = {};
+  unassigned.forEach(m => {
+    const k = m.date && qKeyOf(m.date);
+    if (k) tally[k] = (tally[k] || 0) + 1;
+  });
+  const today = new Date();
+  const suggestedId = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0]
+    || `${today.getFullYear()}-Q${Math.ceil((today.getMonth() + 1) / 3)}`;
+  const [sy, sq] = suggestedId.split('-Q');
+  const suggestedLabel = `${sy}년 ${sq}분기`;
   showModal(`
     <h3 style="margin:0 0 4px;font-size:16px;font-weight:800;">분기 마감</h3>
     <p style="font-size:12px;color:var(--text-2);margin:0 0 16px;line-height:1.6;">현재 미분류 완료 경기 <strong>${unassigned.length}개</strong>를 아래 분기로 묶어 마감합니다.<br>마감 후 새 경기 기록은 다음 분기로 집계됩니다.</p>
@@ -5406,6 +5469,121 @@ function _computeStats(matches) {
   return arr;
 }
 
+/* ── 팀 케미: 누적 전체 기준, 같은 팀으로 함께 뛴 비율 ──────────────
+   모수 = 해당 선수의 총 참여 경기 수
+   비교 대상 = 그 선수와 같은 '경기'에 있었던 적이 있는 선수 전원
+   (같은 날 나온 적도 없는 선수를 '가장 적게 뛴 동료'로 잡으면 의미가 없다) */
+function computeTeammateChemistry(playerKey) {
+  const matches = Object.values(state.matches || {})
+    .filter(m => m.status === 'finished' && Array.isArray(m.teams) && m.teams.length);
+
+  let myGames = 0;
+  const sameTeam = {};   // key → 같은 팀으로 뛴 횟수
+  const pool = {};       // key → 표시용 이름 (같은 경기에 있었던 선수)
+
+  matches.forEach(m => {
+    const teams = (m.teams || []).map(t =>
+      (t.members || []).filter(p => p && p.name && !isGuestPlayer(p))
+    );
+    const myTeam = teams.find(mem =>
+      mem.some(p => (p.name || '').trim().toLowerCase() === playerKey)
+    );
+    if (!myTeam) return;              // 이 경기에 참여하지 않음
+    myGames++;
+    // 같은 경기에 나온 전원을 비교 대상 풀에 넣는다
+    teams.flat().forEach(p => {
+      const k = (p.name || '').trim().toLowerCase();
+      if (k === playerKey) return;
+      pool[k] = (p.name || '').trim();
+    });
+    // 그중 같은 팀이었던 사람만 카운트
+    myTeam.forEach(p => {
+      const k = (p.name || '').trim().toLowerCase();
+      if (k === playerKey) return;
+      sameTeam[k] = (sameTeam[k] || 0) + 1;
+    });
+  });
+
+  const rows = Object.keys(pool).map(k => ({
+    name: pool[k],
+    together: sameTeam[k] || 0,
+    pct: myGames > 0 ? (sameTeam[k] || 0) / myGames * 100 : 0
+  }));
+  return { myGames, rows };
+}
+
+function openChemistryModal(playerName) {
+  const key = (playerName || '').trim().toLowerCase();
+  const { myGames, rows } = computeTeammateChemistry(key);
+
+  if (!myGames || !rows.length) {
+    showModal(`
+      <div style="text-align:center;padding:6px 0 14px;">
+        <div style="font-size:26px;margin-bottom:8px;">🤝</div>
+        <h3 style="margin:0 0 4px;">${escapeHtml(playerName)}</h3>
+        <p style="font-size:12px;color:var(--text-2);margin:0;">아직 함께 뛴 기록이 없어요</p>
+      </div>
+      <button class="btn btn-outline btn-block" data-modal-close>닫기</button>
+    `);
+    return;
+  }
+
+  const draw = () => {
+    const desc = state.chemSort !== 'asc';
+    const sorted = [...rows].sort((a, b) =>
+      desc ? (b.pct - a.pct || b.together - a.together || a.name.localeCompare(b.name, 'ko-KR'))
+           : (a.pct - b.pct || a.together - b.together || a.name.localeCompare(b.name, 'ko-KR'))
+    );
+    const best = [...rows].sort((a, b) => b.pct - a.pct)[0];
+    const worst = [...rows].sort((a, b) => a.pct - b.pct)[0];
+
+    showModal(`
+      <div style="text-align:center;margin-bottom:12px;">
+        <div style="font-size:24px;margin-bottom:4px;">🤝</div>
+        <h3 style="margin:0 0 3px;">${escapeHtml(playerName)} · 팀 케미</h3>
+        <p style="font-size:11.5px;color:var(--text-2);margin:0;">누적 <strong>${myGames}경기</strong> 기준 · 같은 팀으로 뛴 비율</p>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
+        <div style="padding:10px;border-radius:11px;background:var(--accent-soft);border:1px solid var(--accent);">
+          <div style="font-size:9.5px;font-weight:800;color:var(--accent-2);margin-bottom:3px;">가장 많이</div>
+          <div style="font-size:13px;font-weight:900;color:var(--text);">${escapeHtml(best.name)}</div>
+          <div style="font-size:10.5px;font-weight:800;color:var(--accent-2);">${best.pct.toFixed(0)}% · ${best.together}회</div>
+        </div>
+        <div style="padding:10px;border-radius:11px;background:var(--surface-2);border:1px solid var(--border);">
+          <div style="font-size:9.5px;font-weight:800;color:var(--text-3);margin-bottom:3px;">가장 적게</div>
+          <div style="font-size:13px;font-weight:900;color:var(--text);">${escapeHtml(worst.name)}</div>
+          <div style="font-size:10.5px;font-weight:800;color:var(--text-3);">${worst.pct.toFixed(0)}% · ${worst.together}회</div>
+        </div>
+      </div>
+
+      <button class="btn btn-outline btn-block btn-sm" id="chem-sort" style="margin-bottom:10px;font-size:11.5px;">
+        ${desc ? '▼ 많이 뛴 순' : '▲ 적게 뛴 순'} · 탭하면 반대로
+      </button>
+
+      <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:14px;">
+        ${sorted.map(r => `
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;">
+            <span style="flex:1;min-width:0;font-size:12px;font-weight:800;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.name)}</span>
+            <span style="width:58px;height:5px;background:var(--surface-3);border-radius:3px;overflow:hidden;flex-shrink:0;">
+              <span style="display:block;height:100%;width:${r.pct.toFixed(0)}%;background:var(--accent);border-radius:3px;"></span>
+            </span>
+            <span style="font-size:11.5px;font-weight:900;color:var(--text);min-width:34px;text-align:right;">${r.pct.toFixed(0)}%</span>
+            <span style="font-size:10px;font-weight:700;color:var(--text-3);min-width:26px;text-align:right;">${r.together}회</span>
+          </div>`).join('')}
+      </div>
+
+      <button class="btn btn-outline btn-block" data-modal-close>닫기</button>
+    `);
+    const sortBtn = $('#chem-sort');
+    if (sortBtn) sortBtn.onclick = () => {
+      state.chemSort = desc ? 'asc' : 'desc';
+      draw();
+    };
+  };
+  draw();
+}
+
 // opts: { compareMatches, compareLabel } — 각 선수 옆에 비교 기준 순위/변동을 표시
 function renderLeaderboard(archived, containerId, opts) {
   opts = opts || {};
@@ -5493,7 +5671,7 @@ function renderLeaderboard(archived, containerId, opts) {
         return `<div class="lb-grid-row ${topCls}">
           <span><span class="lb-rank-badge ${cls}">${rankLabel}</span></span>
           <div class="lb-name-cell">
-            <span class="lb-player-name">${escapeHtml(s.name)}</span>${cumBadge}
+            <span class="lb-player-name lb-chem-link" data-chem="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>${cumBadge}
           </div>
           <span class="lb-record-cell">${s.w}승 ${s.d}무 ${s.l}패</span>
           <span class="lb-record-cell">${wrPct}%</span>
@@ -5507,6 +5685,10 @@ function renderLeaderboard(archived, containerId, opts) {
     </div>
   `;
 
+  // 선수 이름 탭 → 팀 케미 보기
+  root.querySelectorAll('.lb-chem-link').forEach(el => {
+    el.onclick = (e) => { e.stopPropagation(); openChemistryModal(el.dataset.chem); };
+  });
 }
 
 function renderHistoryList(archived) {
