@@ -1237,7 +1237,7 @@
   }
   .lb-name-cell { min-width: 0; display: flex; align-items: center; gap: 0; }
   .lb-player-name { font-weight: 800; font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1; }
-  /* 탭하면 팀 케미가 열린다는 힌트 */
+  /* 탭하면 팀 매칭 기록이 열린다는 힌트 */
   .lb-chem-link { cursor: pointer; border-bottom: 1px dashed var(--border-2); padding-bottom: 1px; }
   .lb-chem-link:active { color: var(--accent-2); }
   .lb-record-cell { font-size: 9.5px; color: var(--text-2); font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; letter-spacing: -0.02em; }
@@ -1920,7 +1920,7 @@ let state = {
   pmPastExpanded: false,
   expandedMatches: {},
   lbScope: 'quarter',   // 파워 랭킹 범위: 'quarter'(이번 분기) | 'cum'(누적)
-  chemSort: 'desc',     // 팀 케미 정렬: 'desc'(많이 뛴 순) | 'asc'(적게 뛴 순)
+  chemSort: 'desc',     // 팀 매칭 정렬: 'desc'(많이 뛴 순) | 'asc'(적게 뛴 순)
   adminSort: localStorage.getItem('admin_sort') || 'name',
   adminPosFilter: localStorage.getItem('admin_pos_filter') || 'all',
   unsubscribePlayers: null,
@@ -4098,7 +4098,8 @@ function renderTeamBuilderPage() {
       if (p) return { id: pid, ...p, score: calcScore(p) };
       return guestPlayerWithId(pid, v.name || 'Guest');
     });
-    teams = snakeDraft(players, 2);
+    // 인원수로 팀 수를 정하고(≤12명 2팀 / 13명+ 3팀), 매칭 기준으로 배정
+    teams = chemistryDraft(players, autoTeamCount(players.length));
   }
   _tbActive = teams;
 
@@ -4127,6 +4128,7 @@ function renderTeamBuilderPage() {
         ${state.isAdmin ? `
           <button class="btn btn-sm btn-outline" id="tb-2t">2팀</button>
           <button class="btn btn-sm btn-outline" id="tb-3t">3팀</button>
+          <button class="btn btn-sm btn-outline" id="tb-chem">🔀 매칭</button>
           <button class="btn btn-sm btn-outline" id="tb-balance">⚖︎ 균형</button>
           <button class="btn btn-sm btn-outline" id="tb-shuffle"><span class="bn-ic">${svgRaw('shuffle')}</span>랜덤</button>
         ` : ''}
@@ -4149,9 +4151,12 @@ function renderTeamBuilderPage() {
     const grid = $('#tb-grid');
     grid.innerHTML = _tbActive.map((t, i) => {
       const memberCount = (t.members || []).length;
-      const showRating = memberCount >= 5;
+      // 관리자는 4명부터 평점을 본다 (편성 중 밸런스 확인용).
+      // 공유 화면(team-share)은 그대로 5명 이상에서만 노출된다.
+      const minForRating = state.isAdmin ? 4 : 5;
+      const showRating = memberCount >= minForRating;
       const teamScore = showRating ? calculateTeamScore(t.members) : null;
-      const scoreLabel = showRating ? teamScore.toFixed(1) : '5명+';
+      const scoreLabel = showRating ? teamScore.toFixed(1) : `${minForRating}명+`;
       return `
         <div class="team-box ${teamColorClass(i)}">
           <div class="team-box-head">
@@ -4228,14 +4233,21 @@ function renderTeamBuilderPage() {
     $('#tb-2t').onclick = () => {
       _tbActive = readTeamsFromDOM(_tbActive);
       const all = _tbActive.flatMap(t => t.members || []);
-      _tbActive = snakeDraft(all, 2);
+      _tbActive = chemistryDraft(all, 2);
       paint();
     };
     $('#tb-3t').onclick = () => {
       _tbActive = readTeamsFromDOM(_tbActive);
       const all = _tbActive.flatMap(t => t.members || []);
-      _tbActive = snakeDraft(all, 3);
+      _tbActive = chemistryDraft(all, 3);
       paint();
+    };
+    $('#tb-chem').onclick = () => {
+      _tbActive = readTeamsFromDOM(_tbActive);
+      const all = _tbActive.flatMap(t => t.members || []);
+      _tbActive = chemistryDraft(all, _tbActive.length);
+      paint();
+      toast('매칭 기준 재편성 완료', 'ok');
     };
     $('#tb-balance').onclick = () => {
       _tbActive = readTeamsFromDOM(_tbActive);
@@ -4360,9 +4372,12 @@ function renderTeamBuilderPage() {
           return p ? { id: pid, ...p, score: calcScore(p) } : null;
         }).filter(Boolean);
         const allNew = [...newPlayers, ...guests];
-        const numTeams = _tbActive.length || 2;
-        _tbActive = snakeDraft(allNew, numTeams);
+        // 노쇼/합류로 인원이 바뀌면 팀 수도 다시 잡는다 (≤12명 2팀 / 13명+ 3팀)
+        const prevTeams = _tbActive.length || 2;
+        const numTeams = autoTeamCount(allNew.length);
+        _tbActive = chemistryDraft(allNew, numTeams);
         paint();
+        if (numTeams !== prevTeams) toast(`인원 ${allNew.length}명 → ${numTeams}팀으로 재편성`, 'ok');
         // 상단 참석 카운트 갱신
         const allM = _tbActive.flatMap(t => t.members || []);
         const mCnt = allM.filter(p => !isGuestPlayer(p)).length;
@@ -4505,6 +4520,142 @@ function teammatePenalty(penaltyMap, pA, pB) {
 // 팀에 p를 추가했을 때 발생하는 teammate 패널티 합
 function teamPenaltyFor(penaltyMap, team, p) {
   return (team.members || []).reduce((sum, m) => sum + teammatePenalty(penaltyMap, m, p), 0);
+}
+
+// 인원수에 따른 기본 팀 수: ~12명은 2팀, 13명 이상은 3팀
+function autoTeamCount(n) {
+  return n >= 13 ? 3 : 2;
+}
+
+/* ── 누적 팀메이트 이력 (매칭 편성용) ───────────────────────────────
+   전체 완료 경기에서 '같은 팀'이었던 횟수를 쌍 단위로 누적한다.
+   최근 3경기는 가중치를 더 줘서, 누적으로는 적게 만났어도 바로 직전에
+   같은 팀이었다면 다시 묶이지 않도록 한다. */
+function buildTeammateHistoryMap() {
+  const finished = Object.values(state.matches || {})
+    .filter(m => m.status === 'finished' && Array.isArray(m.teams))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
+
+  const map = {};
+  finished.forEach((m, idx) => {
+    const weight = 1 + (idx < 3 ? (3 - idx) * 0.6 : 0);
+    m.teams.forEach(team => {
+      const ids = (team.members || [])
+        .filter(p => p && p.id && !isGuestPlayer(p))
+        .map(p => p.id);
+      for (let a = 0; a < ids.length; a++) {
+        for (let b = a + 1; b < ids.length; b++) {
+          const key = [ids[a], ids[b]].sort().join('|');
+          map[key] = (map[key] || 0) + weight;
+        }
+      }
+    });
+  });
+  return map;
+}
+
+/* ── 매칭 편성 ──────────────────────────────────────────────────
+   "지금까지 같은 팀으로 덜 뛴 조합"이 최대한 많이 나오도록 배정한다.
+   팀 내 모든 쌍의 누적 동반 횟수 합(매칭 비용)과 팀 간 평점 격차를
+   함께 최소화한다 — 매칭만 보면 실력이 한쪽으로 쏠리기 때문. */
+function chemistryDraft(players, teamN) {
+  if (teamN < 2) teamN = 2;
+  const n = players.length;
+  if (!n) return Array.from({ length: teamN }, () => ({ members: [] }));
+
+  const hist = buildTeammateHistoryMap();
+  // 능력치가 있으면 그걸로 계산하고, 없으면(게스트 등) 저장된 score를 쓴다.
+  // calcScore는 능력치가 없을 때 기본 6을 돌려주므로 `calcScore(p) || p.score`로는
+  // score가 영원히 무시된다.
+  const hasStats = p => p && (p.att != null || p.pow != null || p.spd != null || p.pas != null);
+  const sc = p => hasStats(p) ? (calcScore(p) || 6) : (Number(p && p.score) || 6);
+  const pairCost = (a, b) => {
+    if (!a?.id || !b?.id || isGuestPlayer(a) || isGuestPlayer(b)) return 0;
+    return hist[[a.id, b.id].sort().join('|')] || 0;
+  };
+
+  const CHEM_W = 1;    // 같은 팀으로 또 뛰는 것에 대한 비용
+  const BAL_W  = 4;    // 팀 평점 격차 1점 = 매칭 4회치 (실력 쏠림 방지)
+  const cost = (teams) => {
+    let chem = 0;
+    const avgs = [];
+    teams.forEach(t => {
+      const ms = t.members;
+      for (let a = 0; a < ms.length; a++)
+        for (let b = a + 1; b < ms.length; b++) chem += pairCost(ms[a], ms[b]);
+      avgs.push(ms.length ? ms.reduce((s, p) => s + sc(p), 0) / ms.length : 0);
+    });
+    const spread = avgs.length ? Math.max(...avgs) - Math.min(...avgs) : 0;
+    return chem * CHEM_W + spread * BAL_W;
+  };
+
+  // 팀별 정원: 나머지는 앞 팀부터 한 명씩
+  const base = Math.floor(n / teamN), rem = n % teamN;
+  const caps = Array.from({ length: teamN }, (_, i) => base + (i < rem ? 1 : 0));
+
+  const build = (order) => {
+    const teams = Array.from({ length: teamN }, () => ({ members: [] }));
+    order.forEach(p => {
+      let pick = -1, pickCost = Infinity;
+      for (let i = 0; i < teamN; i++) {
+        if (teams[i].members.length >= caps[i]) continue;
+        // 이 팀에 넣었을 때 늘어나는 매칭 비용 + 평점 쏠림
+        const chem = teams[i].members.reduce((s, m) => s + pairCost(m, p), 0);
+        const avg = teams[i].members.length
+          ? teams[i].members.reduce((s, m) => s + sc(m), 0) / teams[i].members.length : 0;
+        const c = chem * CHEM_W + avg * 0.35;   // 평점 높은 팀에 또 몰지 않도록
+        if (c < pickCost) { pickCost = c; pick = i; }
+      }
+      if (pick >= 0) teams[pick].members.push(p);
+    });
+    return teams;
+  };
+
+  // 여러 시작점(실력순 + 랜덤)에서 만들어 가장 좋은 것을 고른다
+  const byScore = [...players].sort((a, b) => sc(b) - sc(a));
+  // 두 팀 사이 1:1 교환으로 더 나아지면 계속 교환 (인원수는 그대로 유지된다)
+  const refine = (teams) => {
+    let c0 = cost(teams), improved = true, guard = 0;
+    while (improved && guard++ < 40) {
+      improved = false;
+      for (let i = 0; i < teamN; i++) {
+        for (let j = i + 1; j < teamN; j++) {
+          for (let a = 0; a < teams[i].members.length; a++) {
+            for (let b = 0; b < teams[j].members.length; b++) {
+              const tmp = teams[i].members[a];
+              teams[i].members[a] = teams[j].members[b];
+              teams[j].members[b] = tmp;
+              const c = cost(teams);
+              if (c < c0 - 1e-9) { c0 = c; improved = true; }
+              else {
+                const back = teams[i].members[a];
+                teams[i].members[a] = teams[j].members[b];
+                teams[j].members[b] = back;
+              }
+            }
+          }
+        }
+      }
+    }
+    return c0;
+  };
+
+  // 시작점마다 교환 최적화까지 돌린 뒤 최선을 고른다.
+  // (베스트 하나만 다듬으면 국소 최적에 갇혀 평점 격차가 남는 경우가 있다)
+  let best = build(byScore), bestCost = refine(best);
+  const consider = (cand) => {
+    if (!cand || cand.some(t => !t.members || !t.members.length)) return;
+    const c = refine(cand);
+    if (c < bestCost - 1e-9) { best = cand; bestCost = c; }
+  };
+  // 기존 편성(실력순 뱀 배분)도 후보에 넣어 이보다 나빠지지 않도록 보장한다
+  try {
+    consider(snakeDraft(players, teamN).map(t => ({ members: [...(t.members || [])] })));
+  } catch (e) {}
+  for (let r = 0; r < 14; r++) {
+    consider(build([...players].sort(() => Math.random() - 0.5)));
+  }
+  return best;
 }
 
 function snakeDraft(players, teamN) {
@@ -5469,7 +5620,7 @@ function _computeStats(matches) {
   return arr;
 }
 
-/* ── 팀 케미: 누적 전체 기준, 같은 팀으로 함께 뛴 비율 ──────────────
+/* ── 팀 매칭: 누적 전체 기준, 같은 팀으로 함께 뛴 비율 ──────────────
    모수 = 해당 선수의 총 참여 경기 수
    비교 대상 = 그 선수와 같은 '경기'에 있었던 적이 있는 선수 전원
    (같은 날 나온 적도 없는 선수를 '가장 적게 뛴 동료'로 잡으면 의미가 없다) */
@@ -5540,7 +5691,7 @@ function openChemistryModal(playerName) {
     showModal(`
       <div style="text-align:center;margin-bottom:12px;">
         <div style="font-size:24px;margin-bottom:4px;">🤝</div>
-        <h3 style="margin:0 0 3px;">${escapeHtml(playerName)} · 팀 케미</h3>
+        <h3 style="margin:0 0 3px;">${escapeHtml(playerName)} · 팀 매칭</h3>
         <p style="font-size:11.5px;color:var(--text-2);margin:0;">누적 <strong>${myGames}경기</strong> 기준 · 같은 팀으로 뛴 비율</p>
       </div>
 
@@ -5685,7 +5836,7 @@ function renderLeaderboard(archived, containerId, opts) {
     </div>
   `;
 
-  // 선수 이름 탭 → 팀 케미 보기
+  // 선수 이름 탭 → 팀 매칭 기록 보기
   root.querySelectorAll('.lb-chem-link').forEach(el => {
     el.onclick = (e) => { e.stopPropagation(); openChemistryModal(el.dataset.chem); };
   });
