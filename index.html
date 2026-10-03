@@ -910,6 +910,14 @@
   }
   .tb-toolbar::-webkit-scrollbar { display: none; }
   .tb-toolbar-spacer { flex: 1 0 8px; }
+  /* 좁은 화면에서 버튼이 찌그러지며 글자가 줄바꿈되지 않도록 */
+  .tb-toolbar .btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 0 10px;
+    height: 30px;        /* 버튼마다 높이가 미세하게 어긋나지 않도록 고정 */
+    font-size: 11px;
+  }
   .tb-footer {
     display: flex;
     flex-wrap: wrap;
@@ -1237,6 +1245,18 @@
   }
   .lb-name-cell { min-width: 0; display: flex; align-items: center; gap: 0; }
   .lb-player-name { font-weight: 800; font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1; }
+  /* ── 팀 매칭 모달: 전원이 스크롤 없이 한 화면에 들어오게 2열 압축 */
+  .chem-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 12px; }
+  .chem-cell {
+    position: relative; display: flex; align-items: center; gap: 6px;
+    padding: 6px 8px; border-radius: 7px; overflow: hidden;
+    background: var(--surface-2); border: 1px solid var(--border);
+  }
+  .chem-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent-soft); }
+  .chem-nm { position: relative; flex: 1; min-width: 0; font-size: 11px; font-weight: 800; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chem-pc { position: relative; font-size: 11px; font-weight: 900; color: var(--text); flex-shrink: 0; }
+  .chem-ct { position: relative; font-size: 9px; font-weight: 700; color: var(--text-3); flex-shrink: 0; }
+
   /* 탭하면 팀 매칭 기록이 열린다는 힌트 */
   .lb-chem-link { cursor: pointer; border-bottom: 1px dashed var(--border-2); padding-bottom: 1px; }
   .lb-chem-link:active { color: var(--accent-2); }
@@ -4128,12 +4148,12 @@ function renderTeamBuilderPage() {
         ${state.isAdmin ? `
           <button class="btn btn-sm btn-outline" id="tb-2t">2팀</button>
           <button class="btn btn-sm btn-outline" id="tb-3t">3팀</button>
-          <button class="btn btn-sm btn-outline" id="tb-chem">🔀 매칭</button>
-          <button class="btn btn-sm btn-outline" id="tb-balance">⚖︎ 균형</button>
-          <button class="btn btn-sm btn-outline" id="tb-shuffle"><span class="bn-ic">${svgRaw('shuffle')}</span>랜덤</button>
+          <button class="btn btn-sm btn-outline" id="tb-chem">매칭</button>
+          <button class="btn btn-sm btn-outline" id="tb-balance">균형</button>
+          <button class="btn btn-sm btn-outline" id="tb-shuffle">랜덤</button>
         ` : ''}
         <div class="tb-toolbar-spacer"></div>
-        <button class="btn btn-sm btn-accent" id="tb-share"><span class="bn-ic">${svgRaw('link')}</span>공유</button>
+        <button class="btn btn-sm btn-accent" id="tb-share">공유</button>
       </div>
       <div class="team-grid" id="tb-grid"></div>
     </div>
@@ -5685,46 +5705,27 @@ function openChemistryModal(playerName) {
       desc ? (b.pct - a.pct || b.together - a.together || a.name.localeCompare(b.name, 'ko-KR'))
            : (a.pct - b.pct || a.together - b.together || a.name.localeCompare(b.name, 'ko-KR'))
     );
-    const best = [...rows].sort((a, b) => b.pct - a.pct)[0];
-    const worst = [...rows].sort((a, b) => a.pct - b.pct)[0];
-
     showModal(`
-      <div style="text-align:center;margin-bottom:12px;">
-        <div style="font-size:24px;margin-bottom:4px;">🤝</div>
+      <div style="text-align:center;margin-bottom:10px;">
         <h3 style="margin:0 0 3px;">${escapeHtml(playerName)} · 팀 매칭</h3>
-        <p style="font-size:11.5px;color:var(--text-2);margin:0;">누적 <strong>${myGames}경기</strong> 기준 · 같은 팀으로 뛴 비율</p>
+        <p style="font-size:11px;color:var(--text-2);margin:0;">누적 <strong>${myGames}경기</strong> 기준 · 같은 팀으로 뛴 비율</p>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
-        <div style="padding:10px;border-radius:11px;background:var(--accent-soft);border:1px solid var(--accent);">
-          <div style="font-size:9.5px;font-weight:800;color:var(--accent-2);margin-bottom:3px;">가장 많이</div>
-          <div style="font-size:13px;font-weight:900;color:var(--text);">${escapeHtml(best.name)}</div>
-          <div style="font-size:10.5px;font-weight:800;color:var(--accent-2);">${best.pct.toFixed(0)}% · ${best.together}회</div>
-        </div>
-        <div style="padding:10px;border-radius:11px;background:var(--surface-2);border:1px solid var(--border);">
-          <div style="font-size:9.5px;font-weight:800;color:var(--text-3);margin-bottom:3px;">가장 적게</div>
-          <div style="font-size:13px;font-weight:900;color:var(--text);">${escapeHtml(worst.name)}</div>
-          <div style="font-size:10.5px;font-weight:800;color:var(--text-3);">${worst.pct.toFixed(0)}% · ${worst.together}회</div>
-        </div>
-      </div>
-
-      <button class="btn btn-outline btn-block btn-sm" id="chem-sort" style="margin-bottom:10px;font-size:11.5px;">
+      <button class="btn btn-outline btn-block btn-sm" id="chem-sort" style="margin-bottom:10px;font-size:11px;padding:6px 10px;">
         ${desc ? '▼ 많이 뛴 순' : '▲ 적게 뛴 순'} · 탭하면 반대로
       </button>
 
-      <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:14px;">
+      <div class="chem-grid">
         ${sorted.map(r => `
-          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;">
-            <span style="flex:1;min-width:0;font-size:12px;font-weight:800;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.name)}</span>
-            <span style="width:58px;height:5px;background:var(--surface-3);border-radius:3px;overflow:hidden;flex-shrink:0;">
-              <span style="display:block;height:100%;width:${r.pct.toFixed(0)}%;background:var(--accent);border-radius:3px;"></span>
-            </span>
-            <span style="font-size:11.5px;font-weight:900;color:var(--text);min-width:34px;text-align:right;">${r.pct.toFixed(0)}%</span>
-            <span style="font-size:10px;font-weight:700;color:var(--text-3);min-width:26px;text-align:right;">${r.together}회</span>
+          <div class="chem-cell">
+            <span class="chem-fill" style="width:${r.pct.toFixed(0)}%"></span>
+            <span class="chem-nm">${escapeHtml(r.name)}</span>
+            <span class="chem-pc">${r.pct.toFixed(0)}%</span>
+            <span class="chem-ct">${r.together}</span>
           </div>`).join('')}
       </div>
 
-      <button class="btn btn-outline btn-block" data-modal-close>닫기</button>
+      <button class="btn btn-outline btn-block btn-sm" data-modal-close>닫기</button>
     `);
     const sortBtn = $('#chem-sort');
     if (sortBtn) sortBtn.onclick = () => {
