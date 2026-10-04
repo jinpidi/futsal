@@ -5479,8 +5479,11 @@ function renderRecordsPage() {
   // history toggle
   $('#rec-history-toggle').onclick = () => { state.historyExpanded = !state.historyExpanded; renderRecordsPage(); };
 
-  renderLeaderboard(selMatches, '#rec-leaderboard',
-    { compareMatches: cmpMatches, compareLabel: cmpLabel });
+  renderLeaderboard(selMatches, '#rec-leaderboard', {
+    compareMatches: cmpMatches,
+    compareLabel: cmpLabel,
+    scopeLabel: sel === 'all' ? '누적' : quarterLabel(sel)
+  });
 
   // render history if open
   if (state.historyExpanded) {
@@ -5520,8 +5523,9 @@ function _computeStats(matches) {
    모수 = 해당 선수의 총 참여 경기 수
    비교 대상 = 그 선수와 같은 '경기'에 있었던 적이 있는 선수 전원
    (같은 날 나온 적도 없는 선수를 '가장 적게 뛴 동료'로 잡으면 의미가 없다) */
-function computeTeammateChemistry(playerKey) {
-  const matches = Object.values(state.matches || {})
+function computeTeammateChemistry(playerKey, scopeMatches) {
+  const src = scopeMatches || Object.values(state.matches || {});
+  const matches = src
     .filter(m => m.status === 'finished' && Array.isArray(m.teams) && m.teams.length);
 
   let myGames = 0;
@@ -5559,16 +5563,18 @@ function computeTeammateChemistry(playerKey) {
   return { myGames, rows };
 }
 
-function openChemistryModal(playerName) {
+// scopeMatches / scopeLabel: 랭킹에서 보고 있던 분기(또는 누적)와 동일한 범위로 계산한다
+function openChemistryModal(playerName, scopeMatches, scopeLabel) {
   const key = (playerName || '').trim().toLowerCase();
-  const { myGames, rows } = computeTeammateChemistry(key);
+  const { myGames, rows } = computeTeammateChemistry(key, scopeMatches);
+  const scope = scopeLabel || '누적';
 
   if (!myGames || !rows.length) {
     showModal(`
       <div style="text-align:center;padding:6px 0 14px;">
         <div style="font-size:26px;margin-bottom:8px;">🤝</div>
         <h3 style="margin:0 0 4px;">${escapeHtml(playerName)}</h3>
-        <p style="font-size:12px;color:var(--text-2);margin:0;">아직 함께 뛴 기록이 없어요</p>
+        <p style="font-size:12px;color:var(--text-2);margin:0;">${escapeHtml(scope)}에는 함께 뛴 기록이 없어요</p>
       </div>
       <button class="btn btn-outline btn-block" data-modal-close>닫기</button>
     `);
@@ -5584,7 +5590,7 @@ function openChemistryModal(playerName) {
     showModal(`
       <div style="text-align:center;margin-bottom:10px;">
         <h3 style="margin:0 0 3px;">${escapeHtml(playerName)} · 팀 매칭</h3>
-        <p style="font-size:11px;color:var(--text-2);margin:0;">누적 <strong>${myGames}경기</strong> 기준 · 같은 팀으로 뛴 비율</p>
+        <p style="font-size:11px;color:var(--text-2);margin:0;">${escapeHtml(scope)} <strong>${myGames}경기</strong> 기준 · 같은 팀으로 뛴 비율</p>
       </div>
 
       <button class="btn btn-outline btn-block btn-sm" id="chem-sort" style="margin-bottom:10px;font-size:11px;padding:6px 10px;">
@@ -5713,9 +5719,12 @@ function renderLeaderboard(archived, containerId, opts) {
     </div>
   `;
 
-  // 선수 이름 탭 → 팀 매칭 기록 보기
+  // 선수 이름 탭 → 지금 보고 있는 분기(또는 누적)와 같은 범위의 팀 매칭 기록
   root.querySelectorAll('.lb-chem-link').forEach(el => {
-    el.onclick = (e) => { e.stopPropagation(); openChemistryModal(el.dataset.chem); };
+    el.onclick = (e) => {
+      e.stopPropagation();
+      openChemistryModal(el.dataset.chem, archived, opts.scopeLabel);
+    };
   });
 }
 
