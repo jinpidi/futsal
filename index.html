@@ -1939,7 +1939,7 @@ let state = {
   historyExpanded: false,
   pmPastExpanded: false,
   expandedMatches: {},
-  lbScope: 'quarter',   // 파워 랭킹 범위: 'quarter'(이번 분기) | 'cum'(누적)
+  lbQuarter: null,      // 파워 랭킹에서 보는 분기 ('2026-Q4' 등) | 'all'(누적). null이면 최신 분기
   chemSort: 'desc',     // 팀 매칭 정렬: 'desc'(많이 뛴 순) | 'asc'(적게 뛴 순)
   adminSort: localStorage.getItem('admin_sort') || 'name',
   adminPosFilter: localStorage.getItem('admin_pos_filter') || 'all',
@@ -1967,6 +1967,36 @@ function abbrevQLabel(label) {
   const m = String(label).match(/^(\d{4})년\s*(\d)분기$/);
   if (m) return `${m[1].slice(2)}년 ${m[2]}Q`;
   return label;
+}
+
+/* ── 분기는 경기 날짜로 자동 결정된다 ────────────────────────────────
+   예전에는 관리자가 '분기 마감'을 눌러야 비로소 묶였고, 누르기 전까지는
+   7월 경기와 10월 경기가 같은 '현재 분기'에 섞였다.
+   이제 날짜만 보고 분기를 정하므로 저장 즉시 제 분기로 들어간다. */
+function matchQuarterId(m) {
+  const d = m && m.date ? new Date(m.date) : null;
+  if (d && !isNaN(d)) return `${d.getFullYear()}-Q${Math.ceil((d.getMonth() + 1) / 3)}`;
+  return (m && m.quarter) || null;   // 날짜가 없을 때만 예전 수동 값에 기댄다
+}
+function quarterLabel(qid) {
+  const m = /^(\d{4})-Q([1-4])$/.exec(qid || '');
+  if (m) return `${m[1]}년 ${m[2]}분기`;
+  return ((state.quarters || {})[qid] || {}).label || qid || '';
+}
+function quarterShortLabel(qid) {
+  const m = /^(\d{4})-Q([1-4])$/.exec(qid || '');
+  if (m) return `${m[1].slice(2)}년 ${m[2]}Q`;
+  return abbrevQLabel(quarterLabel(qid));
+}
+// 완료 경기가 실제로 존재하는 분기 목록 (최신순)
+function listQuarterIds(matches) {
+  const set = new Set();
+  (matches || []).forEach(m => { const q = matchQuarterId(m); if (q) set.add(q); });
+  return [...set].sort().reverse();
+}
+function matchesInQuarter(matches, qid) {
+  if (!qid || qid === 'all') return matches || [];
+  return (matches || []).filter(m => matchQuarterId(m) === qid);
 }
 function fmtDate(iso) {
   if (!iso) return '';
@@ -2174,23 +2204,20 @@ function renderHomePage() {
   const allArchived = all.filter(m => m.status === 'finished');
   const totalArchived = allArchived.length;
 
-  const quarters = state.quarters || {};
-  const qEntries = Object.entries(quarters).sort((a, b) => (b[1].closedAt || 0) - (a[1].closedAt || 0));
-  const hasQuarters = qEntries.length > 0;
-  const unassignedCount = allArchived.filter(m => !m.quarter).length;
+  // 분기는 경기 날짜로 자동 분류된다
+  const qIds = listQuarterIds(allArchived);
+  const hasQuarters = qIds.length > 0;
 
-  const sq = state.selectedQuarter || 'all';
-  const qArchivedCount = sq === 'all' ? totalArchived
-    : sq === 'current' ? unassignedCount
-    : (quarters[sq]?.matchCount || allArchived.filter(m => m.quarter === sq).length);
+  let sq = state.selectedQuarter || 'all';
+  if (sq !== 'all' && !qIds.includes(sq)) sq = 'all';
+  const qArchivedCount = sq === 'all' ? totalArchived : matchesInQuarter(allArchived, sq).length;
 
   const quarterBarHtml = hasQuarters ? `
     <div class="home-quarter-bar">
       <span class="hqb-label">분기</span>
       <div class="hqb-chips">
         <button class="hqb-chip${sq === 'all' ? ' active' : ''}" data-q="all">전체</button>
-        ${unassignedCount > 0 ? `<button class="hqb-chip${sq === 'current' ? ' active' : ''}" data-q="current">현재</button>` : ''}
-        ${qEntries.map(([qId, q]) => `<button class="hqb-chip${sq === qId ? ' active' : ''}" data-q="${qId}">${abbrevQLabel(q.label) || qId}</button>`).join('')}
+        ${qIds.map(q => `<button class="hqb-chip${sq === q ? ' active' : ''}" data-q="${q}">${quarterShortLabel(q)}</button>`).join('')}
       </div>
     </div>
   ` : '';
@@ -2215,7 +2242,7 @@ function renderHomePage() {
         <span class="ha-icon">${svgRaw('trophy')}</span>
         <div>
           <div class="ha-title">파워 랭킹</div>
-          <div class="ha-sub">${hasQuarters && sq !== 'all' ? (quarters[sq]?.label || (sq === 'current' ? '현재 분기' : sq)) : '누적 기록'}</div>
+          <div class="ha-sub">${hasQuarters && sq !== 'all' ? quarterLabel(sq) : '누적 기록'}</div>
         </div>
       </div>
       <div class="home-action ha-admin" data-go="admin">
@@ -2295,21 +2322,19 @@ function renderPreMatchPage() {
   const root = $('#page-prematch');
   if (!root) return;
 
-  const sq = state.selectedQuarter || 'all';
-  const quarters = state.quarters || {};
-  const hasQuarters = Object.keys(quarters).length > 0;
-
   const allMatches = Object.values(state.matches || {}).sort((a, b) => {
     const da = a.date || '', db_ = b.date || '';
     if (da !== db_) return db_.localeCompare(da);
     return (b.createdAt || 0) - (a.createdAt || 0);
   });
 
-  // active = not finished; apply quarter filter only to finished matches
+  // active = not finished. 완료 경기는 '이번 분기'와 그 이전으로 나눈다 (날짜 기준)
   const activeMatches = allMatches.filter(m => m.status !== 'finished');
   const finishedMatches = allMatches.filter(m => m.status === 'finished');
-  const currentFinished = finishedMatches.filter(m => !m.quarter);
-  const pastFinished = finishedMatches.filter(m => !!m.quarter);
+  const nowQ = matchQuarterId({ date: new Date().toISOString().slice(0, 10) });
+  const currentFinished = finishedMatches.filter(m => matchQuarterId(m) === nowQ);
+  const pastFinished = finishedMatches.filter(m => matchQuarterId(m) !== nowQ);
+  const hasQuarters = pastFinished.length > 0;
 
   root.innerHTML = `
     <div class="page-header">
@@ -2353,8 +2378,8 @@ function renderPreMatchPage() {
       const klass = (past || finished) ? ' is-past' : '';
       const finishedKlass = finished ? ' is-finished' : '';
       const statusBadge = finished ? '<span class="badge b-finished">종료</span>' : (past ? '<span class="badge b-past">날짜 지남</span>' : renderStatusBadge(m));
-      const qBadge = finished && m.quarter && quarters[m.quarter]
-        ? `<span class="pm-match-q-tag">${quarters[m.quarter].label}</span>` : '';
+      const qBadge = finished && matchQuarterId(m)
+        ? `<span class="pm-match-q-tag">${quarterShortLabel(matchQuarterId(m))}</span>` : '';
       return `<div class="match-list-card${klass}${finishedKlass}" data-id="${m.id}">
         <div class="match-list-head">
           <span class="match-title">${svgRaw('calendar')} ${fmtDate(m.date)}</span>
@@ -5372,109 +5397,23 @@ function renderTeamSharePage() {
 }
 
 /* ===========================================================
-   QUARTER MANAGEMENT
-   =========================================================== */
-function openCloseQuarterModal() {
-  const unassigned = Object.values(state.matches || {}).filter(m => m.status === 'finished' && !m.quarter);
-  if (!unassigned.length) {
-    toast('마감할 완료 경기가 없어요', 'err');
-    return;
-  }
-  // 제안 분기는 '오늘'이 아니라 '마감할 경기들이 실제로 치러진 시점'에서 뽑는다.
-  // (예: 10월 초에 7~9월 경기를 마감하면 4분기가 아니라 3분기로 제안되어야 한다)
-  const qKeyOf = (ds) => {
-    const dd = new Date(ds);
-    if (isNaN(dd)) return null;
-    return `${dd.getFullYear()}-Q${Math.ceil((dd.getMonth() + 1) / 3)}`;
-  };
-  const tally = {};
-  unassigned.forEach(m => {
-    const k = m.date && qKeyOf(m.date);
-    if (k) tally[k] = (tally[k] || 0) + 1;
-  });
-  const today = new Date();
-  const suggestedId = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0]
-    || `${today.getFullYear()}-Q${Math.ceil((today.getMonth() + 1) / 3)}`;
-  const [sy, sq] = suggestedId.split('-Q');
-  const suggestedLabel = `${sy}년 ${sq}분기`;
-  showModal(`
-    <h3 style="margin:0 0 4px;font-size:16px;font-weight:800;">분기 마감</h3>
-    <p style="font-size:12px;color:var(--text-2);margin:0 0 16px;line-height:1.6;">현재 미분류 완료 경기 <strong>${unassigned.length}개</strong>를 아래 분기로 묶어 마감합니다.<br>마감 후 새 경기 기록은 다음 분기로 집계됩니다.</p>
-    <div class="field" style="margin-bottom:10px;">
-      <label style="font-size:12px;font-weight:700;color:var(--text-2);">분기 이름</label>
-      <input class="input" id="close-q-label" value="${suggestedLabel}" placeholder="예: 2025년 2분기">
-    </div>
-    <div class="field" style="margin-bottom:18px;">
-      <label style="font-size:12px;font-weight:700;color:var(--text-2);">분기 ID (영문·숫자)</label>
-      <input class="input" id="close-q-id" value="${suggestedId}" placeholder="예: 2025-Q2">
-    </div>
-    <div style="display:flex;gap:8px;">
-      <button class="btn btn-outline btn-block" data-modal-close>취소</button>
-      <button class="btn btn-accent btn-block" id="close-q-confirm">마감하기</button>
-    </div>
-  `);
-  $('#close-q-confirm').onclick = async () => {
-    const qId = ($('#close-q-id').value || '').trim();
-    const qLabel = ($('#close-q-label').value || '').trim();
-    if (!qId || !qLabel) { toast('이름과 ID를 모두 입력해주세요', 'err'); return; }
-    if (state.quarters && state.quarters[qId]) { toast('이미 사용중인 분기 ID예요', 'err'); return; }
-    closeModal();
-    await _doCloseQuarter(qId, qLabel, unassigned);
-  };
-}
-async function _doCloseQuarter(qId, qLabel, unassigned) {
-  if (!db) return;
-  try {
-    const updates = {};
-    unassigned.forEach(m => { updates[`matches/${m.id}/quarter`] = qId; });
-    updates[`config/quarters/${qId}`] = { label: qLabel, closedAt: Date.now(), matchCount: unassigned.length };
-    await db.ref('/').update(updates);
-    toast(`${qLabel} 마감 완료 · ${unassigned.length}경기`, 'ok');
-  } catch(e) {
-    toast('마감 중 오류가 발생했어요', 'err');
-    console.error(e);
-  }
-}
-async function _doDeleteQuarter(qId) {
-  if (!db) return;
-  try {
-    const updates = {};
-    Object.values(state.matches || {}).forEach(m => {
-      if (m.quarter === qId) updates[`matches/${m.id}/quarter`] = null;
-    });
-    updates[`config/quarters/${qId}`] = null;
-    await db.ref('/').update(updates);
-    toast('분기 삭제 완료', 'ok');
-  } catch(e) {
-    toast('삭제 중 오류가 발생했어요', 'err');
-  }
-}
-
-/* ===========================================================
    RECORDS
    =========================================================== */
 function renderRecordsPage() {
   const root = $('#page-records');
   if (!root) return;
   const archived = Object.values(state.matches || {}).filter(m => m.status === 'finished');
-  const quarters = state.quarters || {};
-  const qEntries = Object.entries(quarters).sort((a, b) => (b[1].closedAt || 0) - (a[1].closedAt || 0));
-  const hasQuarters = qEntries.length > 0;
 
-  // current quarter = unassigned finished matches
-  const currentMatches = archived.filter(m => !m.quarter);
-
-  // archive selected quarter
-  const archQ = state.archiveQ || (qEntries[0] ? qEntries[0][0] : null);
-  const archMatches = archQ === 'all' ? archived
-    : archived.filter(m => m.quarter === archQ);
-  const archLabel = archQ === 'all' ? '전체 누적' : (abbrevQLabel(quarters[archQ]?.label) || archQ);
-
-  // ── 파워 랭킹 범위 토글: 이번 분기 / 누적
-  const lbScope = state.lbScope === 'cum' ? 'cum' : 'quarter';
-  // 직전 분기 = 가장 최근에 마감된 분기 (qEntries는 closedAt 내림차순)
-  const prevQId = qEntries[0] ? qEntries[0][0] : null;
-  const prevQMatches = prevQId ? archived.filter(m => m.quarter === prevQId) : [];
+  // 분기는 경기 날짜로 자동 분류된다 (최신 분기가 기본 선택)
+  const qIds = listQuarterIds(archived);
+  let sel = state.lbQuarter;
+  if (sel !== 'all' && (!sel || !qIds.includes(sel))) sel = qIds[0] || 'all';
+  const selMatches = matchesInQuarter(archived, sel);
+  // 비교 기준: 선택 분기의 직전 분기 (누적을 보는 중이면 최신 분기와 비교)
+  const selIdx = qIds.indexOf(sel);
+  const cmpQId = sel === 'all' ? qIds[0] : (selIdx >= 0 ? qIds[selIdx + 1] : null);
+  const cmpMatches = cmpQId ? matchesInQuarter(archived, cmpQId) : [];
+  const cmpLabel = cmpQId ? (sel === 'all' ? quarterShortLabel(cmpQId) : '직전 분기') : '';
 
   root.innerHTML = `
     <div class="page-header">
@@ -5487,37 +5426,22 @@ function renderRecordsPage() {
 
     <div class="card">
       <div class="rec-card-header">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span class="section-title" style="margin:0;">파워 랭킹</span>
-          <div class="lb-scope" id="lb-scope">
-            <span class="lb-scope-thumb" id="lb-scope-thumb"></span>
-            <button class="lb-scope-btn${lbScope === 'quarter' ? ' active' : ''}" data-scope="quarter">이번 분기</button>
-            <button class="lb-scope-btn${lbScope === 'cum' ? ' active' : ''}" data-scope="cum">누적</button>
-          </div>
-        </div>
+        <span class="section-title" style="margin:0;">파워 랭킹</span>
         <button class="lb-info-btn" id="rec-rank-info" title="순위 산정 기준">?</button>
+      </div>
+      <div class="quarter-tabs-wrap">
+        <div class="arch-q-pills quarter-seg-group">
+          ${qIds.map(q => `<button class="arch-q-pill${sel === q ? ' active' : ''}" data-aq="${q}">${quarterShortLabel(q)}</button>`).join('')}
+          <button class="arch-q-pill${sel === 'all' ? ' active' : ''}" data-aq="all">누적</button>
+        </div>
+      </div>
+      <div style="font-size:10.5px;color:var(--text-3);font-weight:700;margin:-4px 0 10px;">
+        ${sel === 'all'
+          ? `전체 ${archived.length}경기 누적`
+          : `${quarterLabel(sel)} · ${selMatches.length}경기`}
       </div>
       <div id="rec-leaderboard"></div>
     </div>
-
-    ${hasQuarters ? `
-    <div class="card rec-collapse-card">
-      <button class="rec-toggle-row" id="rec-archive-toggle">
-        <span class="rec-toggle-label">이전 파워 랭킹</span>
-        <span class="rec-toggle-chevron${state.archiveExpanded ? ' open' : ''}">›</span>
-      </button>
-      <div id="rec-archive-body" style="display:${state.archiveExpanded ? 'block' : 'none'}">
-        <div class="arch-q-pills">
-          <button class="arch-q-pill${archQ === 'all' ? ' active' : ''}" data-aq="all">전체 누적</button>
-          ${qEntries.map(([qId, q]) => `<button class="arch-q-pill${archQ === qId ? ' active' : ''}" data-aq="${qId}">${abbrevQLabel(q.label) || qId}</button>`).join('')}
-        </div>
-        <div style="margin-top:14px;">
-          <div class="arch-q-label-row"><span class="q-current-badge" style="background:var(--surface-3);color:var(--text-2);">${archLabel}</span></div>
-          <div id="rec-archive-leaderboard"></div>
-        </div>
-      </div>
-    </div>
-    ` : ''}
 
     <div class="card rec-collapse-card">
       <button class="rec-toggle-row" id="rec-history-toggle">
@@ -5547,64 +5471,16 @@ function renderRecordsPage() {
     <button class="btn btn-accent btn-block" data-modal-close>확인</button>
   `);
 
-  // archive toggle
-  if (hasQuarters) {
-    $('#rec-archive-toggle').onclick = () => { state.archiveExpanded = !state.archiveExpanded; renderRecordsPage(); };
-    $$('.arch-q-pill').forEach(btn => {
-      btn.onclick = () => { state.archiveQ = btn.dataset.aq; renderRecordsPage(); };
-    });
-  }
+  // 분기 탭 (분기별 / 누적)
+  $$('.arch-q-pill').forEach(btn => {
+    btn.onclick = () => { state.lbQuarter = btn.dataset.aq; renderRecordsPage(); };
+  });
 
   // history toggle
   $('#rec-history-toggle').onclick = () => { state.historyExpanded = !state.historyExpanded; renderRecordsPage(); };
 
-  // ── 범위 토글 (클릭 + 좌우 스와이프)
-  const scopeBox = $('#lb-scope');
-  if (scopeBox) {
-    const setScope = (v) => {
-      if (v !== 'quarter' && v !== 'cum') return;
-      if (state.lbScope === v) return;
-      state.lbScope = v;
-      renderRecordsPage();
-    };
-    scopeBox.querySelectorAll('.lb-scope-btn').forEach(b => {
-      b.onclick = () => setScope(b.dataset.scope);
-    });
-    // 스와이프: 왼→오른쪽이면 누적, 오른→왼쪽이면 이번 분기
-    let sx = null;
-    scopeBox.addEventListener('touchstart', e => { sx = e.touches[0].clientX; }, { passive: true });
-    scopeBox.addEventListener('touchend', e => {
-      if (sx == null) return;
-      const dx = e.changedTouches[0].clientX - sx;
-      sx = null;
-      if (Math.abs(dx) < 24) return;
-      setScope(dx < 0 ? 'cum' : 'quarter');
-    }, { passive: true });
-    // 선택된 칸 위로 하이라이트 이동
-    const moveThumb = () => {
-      const thumb = $('#lb-scope-thumb');
-      const active = scopeBox.querySelector('.lb-scope-btn.active');
-      if (!thumb || !active) return;
-      thumb.style.width = active.offsetWidth + 'px';
-      thumb.style.transform = `translateX(${active.offsetLeft - 2}px)`;
-    };
-    moveThumb();
-    requestAnimationFrame(moveThumb);   // 폰트 로드 후 폭 재계산
-  }
-
-  // render current ranking — 범위에 따라 대상/비교 기준이 달라진다
-  renderLeaderboard(
-    lbScope === 'cum' ? archived : currentMatches,
-    '#rec-leaderboard',
-    lbScope === 'cum'
-      ? { compareMatches: currentMatches, compareLabel: '이번 분기' }
-      : { compareMatches: prevQMatches,   compareLabel: '전 분기' }
-  );
-
-  // render archive ranking if open
-  if (hasQuarters && state.archiveExpanded) {
-    renderLeaderboard(archMatches, '#rec-archive-leaderboard');
-  }
+  renderLeaderboard(selMatches, '#rec-leaderboard',
+    { compareMatches: cmpMatches, compareLabel: cmpLabel });
 
   // render history if open
   if (state.historyExpanded) {
@@ -5846,7 +5722,6 @@ function renderLeaderboard(archived, containerId, opts) {
 function renderHistoryList(archived) {
   const root = $('#rec-history');
   if (!root) return;
-  const quarters = state.quarters || {};
   const sorted = [...archived].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   if (!sorted.length) {
@@ -6209,26 +6084,25 @@ function renderAdminPage() {
     </div>
 
     <div class="card admin-section">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div class="section-title" style="margin:0;">분기 관리</div>
-        <button class="btn btn-accent btn-sm" id="adm-close-quarter">분기 마감</button>
+      <div class="section-title" style="margin:0 0 8px;">분기 현황</div>
+      <div style="font-size:11.5px;color:var(--text-2);margin-bottom:10px;line-height:1.5;">
+        분기는 <strong>경기 날짜</strong>로 자동 분류됩니다. 따로 마감할 필요가 없어요.
       </div>
       ${(() => {
-        const qEntries = Object.entries(state.quarters || {}).sort((a,b) => (b[1].closedAt||0)-(a[1].closedAt||0));
-        const unassignedCnt = Object.values(state.matches||{}).filter(m=>m.status==='finished'&&!m.quarter).length;
-        if (!qEntries.length) {
-          return `<div style="font-size:12px;color:var(--text-3);line-height:1.6;">아직 마감된 분기가 없어요.<br>경기 기록이 쌓이면 분기별 파워 랭킹을 관리하세요.</div>`;
-        }
-        return `<div class="quarter-admin-list">${qEntries.map(([qId, q]) => `
-          <div class="quarter-admin-item">
+        const fin = Object.values(state.matches || {}).filter(m => m.status === 'finished');
+        const ids = listQuarterIds(fin);
+        if (!ids.length) return `<div style="font-size:12px;color:var(--text-3);">아직 종료된 경기가 없어요.</div>`;
+        return `<div class="quarter-admin-list">${ids.map(qId => {
+          const ms = matchesInQuarter(fin, qId);
+          const dates = ms.map(m => m.date).filter(Boolean).sort();
+          return `<div class="quarter-admin-item">
             <div>
-              <div class="qa-label">${escapeHtml(q.label||qId)}</div>
-              <div class="qa-meta">${q.matchCount||0}경기 · ${fmtDate(new Date(q.closedAt||0).toISOString().slice(0,10))} 마감</div>
+              <div class="qa-label">${quarterLabel(qId)}</div>
+              <div class="qa-meta">${ms.length}경기${dates.length ? ` · ${fmtDate(dates[0])} ~ ${fmtDate(dates[dates.length-1])}` : ''}</div>
             </div>
-            <button class="icon-btn qa-del-btn" data-qid="${qId}" title="삭제" style="color:var(--danger);">${svgRaw('trash')}</button>
-          </div>`).join('')}</div>`;
+          </div>`;
+        }).join('')}</div>`;
       })()}
-      <div style="margin-top:8px;font-size:11.5px;color:var(--text-3);">미분류 완료 경기: ${Object.values(state.matches||{}).filter(m=>m.status==='finished'&&!m.quarter).length}개</div>
     </div>
 
     <div class="card admin-section">
@@ -6301,25 +6175,6 @@ function renderAdminPage() {
   $('#adm-home').onclick = () => navigate('home');
   $('#adm-logout').onclick = () => { state.isAdmin = false; sessionStorage.removeItem('isAdmin'); renderAdminPage(); };
   $('#adm-chpw').onclick = changeAdminPassword;
-
-  // ── 분기 관리
-  $('#adm-close-quarter').onclick = openCloseQuarterModal;
-  $$('.qa-del-btn').forEach(btn => {
-    btn.onclick = () => {
-      const qId = btn.dataset.qid;
-      const q = (state.quarters || {})[qId];
-      if (!q) return;
-      showModal(`
-        <h3 style="margin:0 0 10px;font-size:15px;font-weight:800;">분기 삭제</h3>
-        <p style="font-size:12.5px;color:var(--text-2);margin:0 0 18px;line-height:1.6;"><strong>${escapeHtml(q.label||qId)}</strong> 분기를 삭제하면<br>해당 경기들이 미분류 상태로 돌아갑니다.</p>
-        <div style="display:flex;gap:8px;">
-          <button class="btn btn-outline btn-block" data-modal-close>취소</button>
-          <button class="btn btn-block" style="background:var(--danger);color:#fff;" id="qa-del-confirm">삭제</button>
-        </div>
-      `);
-      $('#qa-del-confirm').onclick = async () => { closeModal(); await _doDeleteQuarter(qId); };
-    };
-  });
 
   // ── 전체 백업 내보내기
   $('#adm-export').onclick = async () => {
